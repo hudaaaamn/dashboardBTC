@@ -1,8 +1,8 @@
 streamlit
 pandas
-numpy
+numpy==1.26.4
 requests
 plotly
 yfinance
 xgboost
-hmmlearn
+hmmlearn==0.3.2

@@ -260,12 +260,13 @@ code, .stMarkdown code {{ font-family: 'IBM Plex Mono', monospace; }}
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
 # ============================================================
-@st.cache_data(ttl=3600)
-def fetch_price(start="2021-01-01"):
+def _fetch_price_yfinance(start):
     import yfinance as yf
     df = yf.download("BTC-USD", start=start,
                      end=datetime.now().strftime("%Y-%m-%d"),
                      interval="1d", progress=False)
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
@@ -274,6 +275,74 @@ def fetch_price(start="2021-01-01"):
     df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
     df.columns = ["open","high","low","close","volume"]
     return df.dropna()
+
+
+def _fetch_price_binance(start):
+    """
+    Fallback sumber harga BTC lewat Binance public API (tanpa API key).
+    Dipakai kalau yfinance gagal/kosong -- kasus umum saat dashboard
+    dijalankan dari server cloud (Yahoo Finance sering rate-limit/blok
+    IP shared milik penyedia cloud, sementara Binance klines lebih
+    longgar untuk request publik semacam ini).
+    """
+    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
+    end_ms   = int(datetime.now().timestamp() * 1000)
+    rows = []
+    cursor = start_ms
+    url = "https://api.binance.com/api/v3/klines"
+    while cursor < end_ms:
+        params = {
+            "symbol": "BTCUSDT",
+            "interval": "1d",
+            "startTime": cursor,
+            "limit": 1000,
+        }
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        rows.extend(batch)
+        last_open_time = batch[-1][0]
+        next_cursor = last_open_time + 24 * 60 * 60 * 1000
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+        if len(batch) < 1000:
+            break
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows, columns=[
+        "open_time","open","high","low","close","volume",
+        "close_time","quote_asset_volume","num_trades",
+        "taker_buy_base","taker_buy_quote","ignore",
+    ])
+    df["date"] = pd.to_datetime(df["open_time"], unit="ms").dt.normalize()
+    df = df[["date","open","high","low","close","volume"]].set_index("date")
+    for col in ["open","high","low","close","volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.dropna()
+
+
+@st.cache_data(ttl=3600)
+def fetch_price(start="2021-01-01"):
+    try:
+        df = _fetch_price_yfinance(start)
+        if len(df) > 0:
+            return df
+    except Exception:
+        pass
+    # Fallback: yfinance gagal atau balikin data kosong (mis. IP server
+    # cloud diblokir/rate-limited oleh Yahoo Finance) -> pakai Binance.
+    df = _fetch_price_binance(start)
+    if len(df) == 0:
+        raise RuntimeError(
+            "Gagal mengambil data harga BTC dari yfinance maupun Binance. "
+            "Coba lagi beberapa saat lagi."
+        )
+    return df
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():

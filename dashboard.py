@@ -84,193 +84,377 @@ st.set_page_config(
 # ============================================================
 # DESIGN TOKENS
 # ------------------------------------------------------------
-# Palet & tipografi baru untuk redesign tampilan. Warna dasar tetap gelap
-# (cocok untuk dashboard data finansial yang dipakai lama), tapi memakai
-# jingga Bitcoin sebagai aksen utama (bukan biru generik) + teal sebagai
-# aksen sekunder untuk elemen model/prediksi, supaya kartu "Model Usulan"
-# vs model pembanding mudah dibedakan sekilas. Tipografi memakai kombinasi
-# Space Grotesk (display/judul) + IBM Plex Sans (body) + IBM Plex Mono
-# (angka/metrik) — kesan "instrumen kuantitatif", bukan template generik.
+# Redesign kedua: acuan visual adalah apple.com — terang, lega, hairline
+# tipis pengganti border tebal, bayangan sangat halus pengganti outline,
+# satu aksen warna yang dipakai hemat. Warna dasar & teks memakai palet
+# neutral khas Apple (page #f5f5f7, teks #1d1d1f/#6e6e73/#86868b, hairline
+# #d2d2d7). Jingga Bitcoin dipertahankan sebagai SATU-SATUNYA aksen produk
+# (bukan biru generik Apple) supaya identitas "BTC Dashboard" tetap ada —
+# dipakai hemat, persis prinsip restraint Apple: satu warna berani, sisanya
+# netral. Teal dipertahankan sebagai aksen sekunder khusus utk prediksi.
+# Tipografi: system font stack (San Francisco di Apple devices, fallback
+# Inter di platform lain) untuk seluruh teks — termasuk figur numerik,
+# memakai tabular-nums alih-alih font monospace terpisah, supaya angka
+# tetap rapi sejajar tanpa terasa "template terminal".
 # ============================================================
-BG        = "#0b0d10"
-SURFACE   = "#14171c"
-SURFACE_2 = "#1b1f26"
-BORDER    = "#272c34"
-TEXT      = "#e9edf1"
-TEXT_DIM  = "#8b93a1"
-TEXT_MUTE = "#5b6270"
-ACCENT    = "#f7931a"   # jingga Bitcoin — aksen utama
-ACCENT_SOFT = "rgba(247,147,26,0.14)"
-TEAL      = "#2dd4bf"   # aksen sekunder — prediksi / model usulan
-TEAL_SOFT = "rgba(45,212,191,0.14)"
-GREEN     = "#22c55e"   # bull / positif
-RED       = "#ef4444"   # bear / negatif
-AMBER     = "#f59e0b"   # peringatan
-GRID      = "#242a32"
+BG        = "#f5f5f7"   # page background khas Apple
+SURFACE   = "#ffffff"   # kartu/panel
+SURFACE_2 = "#f2f2f4"   # elemen sekunder di dalam kartu (bar non-highlight, dll)
+BORDER    = "#d2d2d7"   # hairline khas Apple
+TEXT      = "#1d1d1f"   # teks utama, hitam pekat khas Apple
+TEXT_DIM  = "#6e6e73"   # teks sekunder
+TEXT_MUTE = "#86868b"   # teks tersier/caption
+ACCENT    = "#e8830f"   # jingga Bitcoin, digelapkan sedikit agar kontras aman di atas putih
+ACCENT_SOFT = "rgba(232,131,15,0.10)"
+TEAL      = "#0f9488"   # aksen sekunder (digelapkan dari versi neon agar terbaca di atas putih) — prediksi / model usulan
+TEAL_SOFT = "rgba(15,148,136,0.10)"
+GREEN     = "#1e8e3e"   # bull / positif — digelapkan agar teks tetap terbaca di atas putih
+RED       = "#d5372b"   # bear / negatif — idem
+AMBER     = "#b1740f"   # peringatan (teks); versi cerah dipakai khusus utk elemen non-teks
+GRID      = "#e5e5ea"
 
 REGIME_COLORS = {0: RED, 1: TEXT_MUTE, 2: GREEN}
 REGIME_NAMES  = {0: "Bear", 1: "Sideways", 2: "Bull"}
 
 # ============================================================
 # CUSTOM CSS
+# ------------------------------------------------------------
+# Bahasa visual: apple.com. Tidak ada gradient dekoratif, tidak ada
+# border tebal berwarna — kartu dibedakan dari latar lewat bayangan
+# sangat halus + hairline 1px senada latar, radius besar (18–20px),
+# dan banyak ruang kosong. Satu aksen (jingga Bitcoin) dipakai hemat;
+# elemen lain netral. Font: system stack (San Francisco di perangkat
+# Apple, Inter di platform lain) untuk semua teks termasuk angka —
+# angka memakai font-variant-numeric: tabular-nums supaya tetap rapi
+# sejajar tanpa perlu font monospace terpisah.
 # ============================================================
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {{
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                 "Inter", "Helvetica Neue", Arial, sans-serif;
+}}
 
 html, body, [class*="css"] {{
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: var(--font-sans);
     background-color: {BG};
+    color: {TEXT};
+    -webkit-font-smoothing: antialiased;
 }}
 .stApp {{ background-color: {BG}; }}
 [data-testid="stHeader"] {{ background: transparent; }}
-h1, h2, h3 {{ font-family: 'Space Grotesk', sans-serif; }}
-code, .stMarkdown code {{ font-family: 'IBM Plex Mono', monospace; }}
+h1, h2, h3, h4 {{ font-family: var(--font-sans); letter-spacing:-0.01em; }}
+p, span, div, label {{ font-family: var(--font-sans); }}
+code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace, monospace; font-size:0.92em; }}
+.tnum {{ font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
+
+/* Blok konten utama diberi lebar maksimum + padding lega, khas halaman produk Apple */
+.block-container {{ padding-top:1.4rem; padding-bottom:3rem; max-width:1180px; }}
 
 /* Sembunyikan sidebar bawaan — navigasi dipindah ke tab atas */
 [data-testid="stSidebar"] {{ display: none; }}
 [data-testid="collapsedControl"] {{ display: none; }}
 
-/* ---- Topbar (pengganti sidebar) ---- */
+/* ---- Topbar (pengganti sidebar) — nav bar bersih ala apple.com ---- */
 .topbar {{
     display:flex; align-items:center; justify-content:space-between;
     gap:16px; flex-wrap:wrap;
-    background: linear-gradient(135deg, {SURFACE} 0%, #1a140b 120%);
-    border:1px solid {BORDER}; border-radius:16px;
-    padding:18px 24px; margin-bottom:14px;
+    background: rgba(255,255,255,0.82);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border:1px solid {BORDER}; border-radius:18px;
+    padding:16px 26px; margin-bottom:16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }}
-.topbar-brand {{ display:flex; align-items:center; gap:12px; }}
+.topbar-brand {{ display:flex; align-items:center; gap:14px; }}
 .topbar-coin {{
-    width:40px; height:40px; border-radius:50%;
-    background: radial-gradient(circle at 30% 30%, {ACCENT}, #a35a05);
+    width:38px; height:38px; border-radius:50%;
+    background: {ACCENT};
     display:flex; align-items:center; justify-content:center;
-    font-size:20px; font-weight:700; color:#1a0f00;
+    font-size:18px; font-weight:700; color:#ffffff;
     flex-shrink:0;
 }}
 .topbar-title h1 {{
-    color:{TEXT}; font-size:20px; font-weight:700; margin:0; line-height:1.2;
+    color:{TEXT}; font-size:19px; font-weight:700; margin:0; line-height:1.2;
+    letter-spacing:-0.015em;
 }}
 .topbar-title p {{ color:{TEXT_DIM}; font-size:12.5px; margin:2px 0 0; }}
 .topbar-status {{ display:flex; align-items:center; gap:10px; }}
+
+/* ---- Status pill — netral, tanpa lampu lalu lintas merah-hijau generik ---- */
 .status-pill {{
-    font-family:'IBM Plex Mono', monospace; font-size:12px; font-weight:500;
-    padding:6px 12px; border-radius:20px; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:7px;
+    font-size:12.5px; font-weight:500;
+    padding:6px 13px 6px 11px; border-radius:20px; white-space:nowrap;
+    background:{SURFACE_2}; color:{TEXT_DIM};
     border:1px solid transparent;
 }}
-.status-live {{ color:{GREEN}; background:rgba(34,197,94,0.12); border-color:rgba(34,197,94,0.3); }}
-.status-stale {{ color:{AMBER}; background:rgba(245,158,11,0.12); border-color:rgba(245,158,11,0.3); }}
+.status-pill .dot {{
+    width:7px; height:7px; border-radius:50%; flex-shrink:0;
+}}
+.status-live .dot {{ background:{TEAL}; }}
+.status-live {{ color:{TEXT}; }}
+.status-stale .dot {{ background:{ACCENT}; }}
+.status-stale {{ color:{TEXT}; background:{ACCENT_SOFT}; }}
 
-/* ---- Tab navigasi (pengganti sidebar radio) ---- */
+/* ---- Tab navigasi — segmented control ala apple.com ---- */
 .stTabs [data-baseweb="tab-list"] {{
-    gap:6px; background:{SURFACE}; border:1px solid {BORDER};
-    border-radius:12px; padding:6px; margin-bottom:18px;
+    gap:4px; background:{SURFACE_2}; border:none;
+    border-radius:12px; padding:5px; margin-bottom:22px;
+    width:fit-content;
 }}
 .stTabs [data-baseweb="tab"] {{
-    height:42px; border-radius:9px; padding:0 18px;
-    color:{TEXT_DIM}; font-weight:600; font-size:14px;
-    background:transparent;
+    height:40px; border-radius:9px; padding:0 20px;
+    color:{TEXT_DIM}; font-weight:590; font-size:14px;
+    background:transparent; transition: background 0.15s ease;
 }}
 .stTabs [aria-selected="true"] {{
-    background:{ACCENT_SOFT} !important; color:{ACCENT} !important;
+    background:{SURFACE} !important; color:{TEXT} !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }}
-.stTabs [data-baseweb="tab-highlight"] {{ background-color: {ACCENT}; }}
+.stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent; }}
 .stTabs [data-baseweb="tab-border"] {{ display:none; }}
 
 /* ---- Metric cards ---- */
 [data-testid="stMetric"] {{
     background: {SURFACE};
     border: 1px solid {BORDER};
-    border-top: 2px solid {ACCENT};
-    border-radius: 12px;
-    padding: 14px 18px 16px;
+    border-radius: 18px;
+    padding: 18px 20px 20px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.035);
+    overflow: visible;
+    height: auto;
 }}
 [data-testid="stMetric"] label {{
     color: {TEXT_DIM} !important;
-    font-size: 11.5px !important;
-    font-weight: 600 !important;
-    letter-spacing: .05em;
-    text-transform: uppercase;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0;
+    text-transform: none;
+}}
+/* Nilai metrik: Streamlit secara default memotongnya dengan "..." kalau
+   kontennya panjang (mis. "$76,145 – $82,xxx"), padahal masih ada ruang.
+   Diizinkan membungkus ke baris kedua dan ukuran sedikit dikecilkan +
+   dibuat sedikit menyesuaikan lebar kartu, supaya nilai selalu utuh
+   terbaca tanpa terpotong di layar desktop mana pun. */
+[data-testid="stMetricValue"] {{
+    overflow: visible !important;
+}}
+[data-testid="stMetricValue"] > div {{
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    text-overflow: unset !important;
+    overflow: visible !important;
+    line-height: 1.2 !important;
 }}
 [data-testid="stMetricValue"],
 [data-testid="stMetricValue"] * {{
     color: {TEXT} !important;
     -webkit-text-fill-color: {TEXT} !important;
-    font-family:'IBM Plex Mono', monospace !important;
-    font-size: 24px !important;
-    font-weight: 600 !important;
+    font-family: var(--font-sans) !important;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(17px, 1.9vw, 23px) !important;
+    font-weight: 650 !important;
+    letter-spacing: -0.01em;
     background: none !important;
     text-shadow: none !important;
 }}
-[data-testid="stMetricDelta"] {{ font-size: 13px !important; }}
+[data-testid="stMetricDelta"] {{ font-size: 13px !important; font-weight:500; }}
 
 /* ---- Page header (per tab) ---- */
-.page-header {{ margin-bottom:20px; }}
+.page-header {{ margin-bottom:22px; }}
 .page-header h2 {{
-    color:{TEXT}; font-size:22px; font-weight:700; margin:0 0 4px;
+    color:{TEXT}; font-size:26px; font-weight:700; margin:0 0 5px;
+    letter-spacing:-0.02em;
 }}
-.page-header p {{ color:{TEXT_DIM}; font-size:13.5px; margin:0; }}
+.page-header p {{ color:{TEXT_DIM}; font-size:14px; margin:0; }}
 
 /* ---- Regime badge ---- */
-.regime-bull {{ background:rgba(34,197,94,0.14); color:{GREEN}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:1px solid rgba(34,197,94,0.3); }}
-.regime-bear {{ background:rgba(239,68,68,0.14); color:{RED}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:1px solid rgba(239,68,68,0.3); }}
-.regime-side {{ background:rgba(139,147,161,0.14); color:{TEXT_DIM}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:1px solid {BORDER}; }}
+.regime-bull {{ background:rgba(30,142,62,0.10); color:{GREEN}; padding:6px 14px;
+                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
+.regime-bear {{ background:rgba(213,55,43,0.10); color:{RED}; padding:6px 14px;
+                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
+.regime-side {{ background:{SURFACE_2}; color:{TEXT_DIM}; padding:6px 14px;
+                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
 
-/* ---- Info / warning boxes ---- */
+/* ---- Info / warning boxes — kartu netral, aksen warna hanya di label ---- */
 .info-box {{
-    background:{SURFACE}; border:1px solid {BORDER}; border-left:3px solid {TEAL};
-    border-radius:10px; padding:14px 18px; font-size:13px; color:{TEXT_DIM};
+    background:{SURFACE}; border:1px solid {BORDER};
+    border-radius:16px; padding:16px 20px; font-size:13.5px; color:{TEXT_DIM};
     line-height:1.65; margin-top:12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }}
-.info-box b {{ color:{TEXT}; }}
+.info-box b {{ color:{TEXT}; font-weight:600; }}
 .warn-box {{
-    background:rgba(245,158,11,0.06); border:1px solid rgba(245,158,11,0.35);
-    border-left:3px solid {AMBER}; border-radius:10px;
-    padding:14px 18px; font-size:13px; color:#fcd9a8; line-height:1.65;
+    background:#fdf6ea; border:1px solid rgba(177,116,15,0.25);
+    border-radius:16px;
+    padding:16px 20px; font-size:13.5px; color:#7a5109; line-height:1.65;
     margin-top:12px;
 }}
-.warn-box b {{ color:{AMBER}; }}
+.warn-box b {{ color:{AMBER}; font-weight:600; }}
 .disclaimer-box {{
-    background:{SURFACE}; border:1px solid rgba(239,68,68,0.3); border-left:3px solid {RED};
-    border-radius:10px; padding:14px 18px; font-size:12.5px; color:{TEXT_DIM};
-    line-height:1.6; margin-top:16px;
+    background:{SURFACE_2}; border:1px solid {BORDER};
+    border-radius:16px; padding:15px 20px; font-size:12.5px; color:{TEXT_DIM};
+    line-height:1.6; margin-top:18px;
 }}
 .disclaimer-box b {{ color:{TEXT}; }}
 
 /* ---- Section label ---- */
 .section-label {{
-    font-family:'Space Grotesk', sans-serif;
-    font-size:12px; font-weight:600; color:{TEXT_DIM};
-    letter-spacing:.06em; text-transform:uppercase;
-    margin: 22px 0 12px; padding-bottom:6px;
+    font-family: var(--font-sans);
+    font-size:13px; font-weight:600; color:{TEXT};
+    letter-spacing:0; text-transform:none;
+    margin: 28px 0 14px; padding-bottom:8px;
     border-bottom:1px solid {BORDER};
 }}
 
 /* ---- Dataframe ---- */
-[data-testid="stDataFrame"] {{ border:1px solid {BORDER}; border-radius:10px; overflow:hidden; }}
+[data-testid="stDataFrame"] {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; }}
 
 /* ---- Expander ---- */
 [data-testid="stExpander"] {{
-    background:{SURFACE}; border:1px solid {BORDER}; border-radius:10px;
+    background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
+}}
+[data-testid="stExpander"] summary {{ font-weight:500; color:{TEXT} !important; }}
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] summary p {{ color:{TEXT} !important; }}
+[data-testid="stExpanderDetails"] {{ color:{TEXT_DIM}; }}
+
+/* ---- Pengaman kontras tambahan untuk widget native ----
+   Beberapa komponen Streamlit bawaan (bukan hasil st.markdown kustom di
+   atas) mengambil warna teks dari base theme aplikasi. Baris ini
+   memastikan semuanya tetap gelap-di-atas-terang walau base theme app
+   pengguna (config.toml / preferensi sistem) berbeda dari yang kita set. */
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stCaptionContainer"],
+.stCaption, small {{ color:{TEXT_DIM} !important; }}
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] b {{ color:{TEXT} !important; }}
+[data-testid="stNotification"] p,
+[data-testid="stNotification"] div {{ color:{TEXT} !important; }}
+[data-testid="stTable"] td, [data-testid="stTable"] th {{ color:{TEXT} !important; }}
+.stSelectbox label, .stRadio label {{ color:{TEXT} !important; }}
+
+/* ---- Fokus & shadow saat diklik — dibuat halus, bukan kotak gelap kasar ----
+   Default focus ring beberapa komponen BaseWeb mengikuti warna base theme
+   (bisa tampak sebagai kotak gelap yang kontras kasar di atas latar
+   terang). Diganti dengan ring tipis warna aksen, tetap terlihat jelas
+   untuk aksesibilitas keyboard, tapi tidak kasar saat diklik mouse. */
+button:focus, button:focus-visible,
+[data-baseweb="tab"]:focus, [data-baseweb="tab"]:focus-visible,
+[tabindex]:focus-visible {{
+    outline: 2px solid {ACCENT} !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+}}
+[data-testid="stExpander"] summary:focus,
+[data-testid="stExpander"] summary:hover {{
+    box-shadow: none !important; background: {SURFACE_2};
+}}
+.stButton > button:focus:not(:focus-visible) {{ box-shadow:none !important; outline:none !important; }}
+
+/* ---- color-scheme: light ----
+   Chrome/Edge punya fitur "auto-darken" untuk kontrol native (button,
+   input, select) yang mengikuti dark-mode OS/browser TERLEPAS dari CSS
+   halaman, kalau halaman tidak secara eksplisit bilang dirinya bertema
+   terang. Baris ini adalah sinyal resmi ke browser: "halaman ini memang
+   terang", supaya <button> (Refresh Data) tidak lagi ikut dipaksa gelap. */
+:root, html {{ color-scheme: light !important; }}
+
+/* ---- Tombol (Refresh Data) — pill khas Apple ----
+   Selector diperkuat (atribut kind + testid) supaya menang dari style
+   bawaan BaseWeb yang kadang punya spesifisitas lebih tinggi. */
+.stButton > button,
+.stButton > button[kind],
+[data-testid="stBaseButton-secondary"],
+[data-testid="baseButton-secondary"] {{
+    border-radius:980px !important; font-weight:590 !important;
+    border:1px solid {BORDER} !important; background:{SURFACE} !important;
+    color:{TEXT} !important; -webkit-text-fill-color:{TEXT} !important;
+    transition: background 0.15s ease;
+}}
+.stButton > button *, [data-testid="stBaseButton-secondary"] * {{
+    color:{TEXT} !important; -webkit-text-fill-color:{TEXT} !important;
+}}
+.stButton > button:hover {{ background:{SURFACE_2} !important; border-color:{TEXT_MUTE} !important; }}
+
+/* ---- Tabel HTML kustom (pengganti st.dataframe) ----
+   st.dataframe dirender lewat komponen grid (canvas) milik Streamlit yang
+   mengambil warnanya dari tema internal Streamlit sendiri, BUKAN dari CSS
+   halaman ini — makanya walau seluruh halaman sudah terang, tabelnya bisa
+   tetap gelap kalau tema Streamlit belum kebaca sebagai "light" di sisi
+   pengguna. Untuk tabel yang datanya sudah final untuk ditampilkan (bukan
+   butuh sortir/scroll interaktif), dipakai tabel HTML biasa yang 100%
+   ikut CSS di sini — jaminan selalu terang, di browser/perangkat manapun. */
+.table-wrap {{
+    background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
+    overflow:hidden; margin-top:8px;
+}}
+table.apple-table {{
+    width:100%; border-collapse:collapse; font-size:13.5px;
+    color:{TEXT};
+}}
+table.apple-table thead th {{
+    background:{SURFACE_2}; color:{TEXT_DIM}; font-weight:600;
+    text-align:left; padding:10px 14px; border-bottom:1px solid {BORDER};
+    white-space:nowrap;
+}}
+table.apple-table tbody td {{
+    padding:9px 14px; border-bottom:1px solid {BORDER};
+    color:{TEXT}; white-space:nowrap;
+}}
+table.apple-table tbody tr:last-child td {{ border-bottom:none; }}
+table.apple-table tbody tr:hover {{ background:{BG}; }}
+
+/* ---- Jarak antar-kartu supaya tidak "nempel" ---- */
+.warn-box, .info-box, .disclaimer-box {{ margin-bottom:20px; }}
+
+/* ---- Menyeragamkan tinggi baris kartu (metrik, dll) agar rapi sejajar ---- */
+[data-testid="stHorizontalBlock"] {{ align-items: stretch !important; }}
+[data-testid="stHorizontalBlock"] > div {{ display:flex !important; }}
+[data-testid="stHorizontalBlock"] > div > div {{ width:100%; display:flex; }}
+[data-testid="stHorizontalBlock"] [data-testid="stVerticalBlock"] {{ width:100%; }}
+[data-testid="stMetric"] {{
+    display:flex !important; flex-direction:column; justify-content:center;
+    width:100%;
 }}
 
 /* ---- Responsif tablet/mobile ---- */
 @media (max-width: 900px) {{
-    .topbar {{ padding:14px 16px; }}
-    .topbar-title h1 {{ font-size:17px; }}
-    .page-header h2 {{ font-size:19px; }}
+    .topbar {{ padding:14px 18px; border-radius:16px; }}
+    .topbar-title h1 {{ font-size:16.5px; }}
+    .page-header h2 {{ font-size:21px; }}
     [data-testid="stMetricValue"] {{ font-size:20px !important; }}
     [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
     [data-testid="stHorizontalBlock"] > div {{ min-width: 46% !important; }}
-    .stTabs [data-baseweb="tab"] {{ padding:0 10px; font-size:12.5px; }}
+    .stTabs [data-baseweb="tab"] {{ padding:0 12px; font-size:12.5px; }}
+    .block-container {{ padding-left:0.9rem; padding-right:0.9rem; }}
 }}
 @media (max-width: 560px) {{
     [data-testid="stHorizontalBlock"] > div {{ min-width: 100% !important; }}
 }}
 </style>
 """, unsafe_allow_html=True)
+
+# ============================================================
+# HELPER — render tabel sebagai HTML (bukan st.dataframe)
+# ------------------------------------------------------------
+# Alasan: st.dataframe dirender lewat komponen grid milik Streamlit yang
+# ikut tema internal Streamlit (bisa auto dark), bukan CSS kustom di file
+# ini. Untuk tabel yang murni ditampilkan (tanpa perlu sortir/scroll
+# interaktif ala grid), dipakai HTML table biasa yang 100% ikut styling
+# apple.com di atas — dijamin selalu terang di browser/perangkat manapun.
+# Ini murni cara MENAMPILKAN data yang sama, bukan mengubah datanya.
+# ============================================================
+def render_table(df: pd.DataFrame):
+    html = df.to_html(index=False, escape=False, classes="apple-table", border=0)
+    st.markdown(f"<div class='table-wrap'>{html}</div>", unsafe_allow_html=True)
 
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
@@ -593,7 +777,7 @@ with refresh_col:
     # Yahoo Finance baru saja final (lihat catatan di kepala berkas soal
     # delay basis hari US Eastern vs WIB).
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Refresh Data", use_container_width=True,
+    if st.button("Refresh Data", use_container_width=True,
                  help="Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"):
         st.cache_data.clear()
         st.rerun()
@@ -630,18 +814,18 @@ is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and
 status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
     if is_price_fresh:
-        st.markdown(f"<span class='status-pill status-live'>● Harga Up-to-date</span>",
+        st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga Up-to-date</span>",
                     unsafe_allow_html=True)
     else:
         st.markdown(
-            f"<span class='status-pill status-stale'>● Harga tertinggal {price_staleness_days} hari</span>",
+            f"<span class='status-pill status-stale'><span class='dot'></span>Harga tertinggal {price_staleness_days} hari</span>",
             unsafe_allow_html=True)
 with status_col1:
     if is_onchain_fresh:
-        st.markdown(f"<span class='status-pill status-live'>● On-chain Live</span>",
+        st.markdown("<span class='status-pill status-live'><span class='dot'></span>On-chain Live</span>",
                     unsafe_allow_html=True)
     else:
-        st.markdown(f"<span class='status-pill status-stale'>● On-chain tertinggal {onchain_stale_days} hari</span>",
+        st.markdown(f"<span class='status-pill status-stale'><span class='dot'></span>On-chain tertinggal {onchain_stale_days} hari</span>",
                     unsafe_allow_html=True)
 with status_col2:
     st.markdown("<div></div>", unsafe_allow_html=True)
@@ -688,7 +872,12 @@ with st.expander("🛠️ Debug — cek apa yang benar-benar diterima server dar
     <b>5 baris terakhir hasil fetch_price() (data mentah, sebelum join/forward-fill apa pun):</b>
     </div>
     """, unsafe_allow_html=True)
-    st.dataframe(df_p.tail(5), use_container_width=True)
+    debug_df = df_p.tail(5).reset_index()
+    debug_df["date"] = debug_df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    for c in ["open", "high", "low", "close"]:
+        debug_df[c] = debug_df[c].map(lambda v: f"{v:,.4f}")
+    debug_df["volume"] = debug_df["volume"].map(lambda v: f"{v:,.0f}")
+    render_table(debug_df)
     st.caption(
         "Kalau tanggal terakhir di tabel ini SUDAH menunjukkan 26/27 Agustus "
         "tapi badge di atas masih bilang tertinggal — berarti masalahnya di "
@@ -826,14 +1015,15 @@ with tab_pred:
         )
     ))
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor=BG,
         plot_bgcolor=BG,
+        font=dict(color=TEXT, family="-apple-system, Inter, sans-serif"),
         height=420,
         margin=dict(l=0, r=0, t=10, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
-        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID),
-        xaxis=dict(gridcolor=GRID),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, font=dict(color=TEXT_DIM)),
+        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+        xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
         hovermode="x unified"
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -995,11 +1185,9 @@ with tab_comp:
     df_show["PinballHi"] = df_show["PinballHi"].apply(
         lambda x: f"{x:.1f}" if pd.notna(x) else "—")
 
-    st.dataframe(
+    render_table(
         df_show[["No","Model","Peran","Sumber","MAE","RMSE","MAPE",
-                 "R2","DirAcc","Coverage","AvgWidth"]],
-        hide_index=True,
-        use_container_width=True
+                 "R2","DirAcc","Coverage","AvgWidth"]]
     )
 
     # --- Ringkasan uji signifikansi & ablation study (RQ2) ---
@@ -1071,7 +1259,7 @@ with tab_comp:
                 unsafe_allow_html=True)
     tab1, tab2, tab3 = st.tabs(["MAE & MAPE", "R² & DirAcc", "Probabilistik"])
 
-    bar_colors = [SURFACE_2]*5 + [ACCENT]
+    bar_colors = ["#c7c7cc"]*5 + [ACCENT]   # abu netral utk 5 model pembanding, aksen jingga hanya utk Model Usulan
 
     with tab1:
         col1, col2 = st.columns(2)
@@ -1082,12 +1270,13 @@ with tab_comp:
                 text=[f"${v:,}" for v in df_res["MAE"]], textposition="outside"
             ))
             fig_mae.update_layout(
-                title="MAE (USD) — lebih rendah lebih baik",
-                template="plotly_dark", paper_bgcolor=BG,
+                title=dict(text="MAE (USD) — lebih rendah lebih baik", font=dict(color=TEXT, size=14)),
+                template="plotly_white", paper_bgcolor=BG,
                 plot_bgcolor=BG, height=320,
+                font=dict(color=TEXT),
                 margin=dict(l=0,r=60,t=40,b=0),
-                xaxis=dict(tickprefix="$", gridcolor=GRID),
-                yaxis=dict(gridcolor=GRID)
+                xaxis=dict(tickprefix="$", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+                yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_mae, use_container_width=True)
         with col2:
@@ -1097,12 +1286,13 @@ with tab_comp:
                 text=[f"{v:.2f}%" for v in df_res["MAPE"]], textposition="outside"
             ))
             fig_mape.update_layout(
-                title="MAPE (%) — lebih rendah lebih baik",
-                template="plotly_dark", paper_bgcolor=BG,
+                title=dict(text="MAPE (%) — lebih rendah lebih baik", font=dict(color=TEXT, size=14)),
+                template="plotly_white", paper_bgcolor=BG,
                 plot_bgcolor=BG, height=320,
+                font=dict(color=TEXT),
                 margin=dict(l=0,r=60,t=40,b=0),
-                xaxis=dict(ticksuffix="%", gridcolor=GRID),
-                yaxis=dict(gridcolor=GRID)
+                xaxis=dict(ticksuffix="%", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+                yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_mape, use_container_width=True)
 
@@ -1115,12 +1305,13 @@ with tab_comp:
                 text=[f"{v:.4f}" for v in df_res["R2"]], textposition="outside"
             ))
             fig_r2.update_layout(
-                title="R² — lebih tinggi lebih baik",
-                template="plotly_dark", paper_bgcolor=BG,
+                title=dict(text="R² — lebih tinggi lebih baik", font=dict(color=TEXT, size=14)),
+                template="plotly_white", paper_bgcolor=BG,
                 plot_bgcolor=BG, height=320,
+                font=dict(color=TEXT),
                 margin=dict(l=0,r=80,t=40,b=0),
-                xaxis=dict(range=[0.98, 0.990], gridcolor=GRID),
-                yaxis=dict(gridcolor=GRID)
+                xaxis=dict(range=[0.98, 0.990], gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+                yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_r2, use_container_width=True)
         with col2:
@@ -1130,14 +1321,16 @@ with tab_comp:
                 text=[f"{v:.1f}%" for v in df_res["DirAcc"]], textposition="outside"
             ))
             fig_dir.add_vline(x=50, line_dash="dash", line_color=TEXT_DIM,
-                              annotation_text="Random (50%)")
+                              annotation_text="Random (50%)",
+                              annotation_font_color=TEXT_DIM)
             fig_dir.update_layout(
-                title="Directional Accuracy — lebih tinggi lebih baik",
-                template="plotly_dark", paper_bgcolor=BG,
+                title=dict(text="Directional Accuracy — lebih tinggi lebih baik", font=dict(color=TEXT, size=14)),
+                template="plotly_white", paper_bgcolor=BG,
                 plot_bgcolor=BG, height=320,
+                font=dict(color=TEXT),
                 margin=dict(l=0,r=60,t=40,b=0),
-                xaxis=dict(ticksuffix="%", range=[40,60], gridcolor=GRID),
-                yaxis=dict(gridcolor=GRID)
+                xaxis=dict(ticksuffix="%", range=[40,60], gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+                yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_dir, use_container_width=True)
 
@@ -1156,23 +1349,26 @@ with tab_comp:
         fig_cov.add_trace(go.Indicator(
             mode="gauge+number+delta",
             value=mu["Coverage"],
-            delta={"reference": 90, "valueformat": ".1f"},
+            number={"suffix":"%", "font":{"color": TEXT, "size":36}},
+            delta={"reference": 90, "valueformat": ".1f", "font":{"color": TEXT_DIM, "size":14}},
             gauge={
-                "axis": {"range":[75,100], "ticksuffix":"%"},
+                "axis": {"range":[75,100], "ticksuffix":"%", "tickfont":{"color": TEXT_DIM}},
                 "bar":  {"color": ACCENT},
+                "bgcolor": SURFACE,
                 "steps":[
-                    {"range":[75,90], "color": SURFACE_2},
-                    {"range":[90,100],"color": "rgba(247,147,26,0.25)"}
+                    {"range":[75,90], "color": "#e5e5ea"},
+                    {"range":[90,100],"color": ACCENT_SOFT.replace("0.10","0.35")}
                 ],
                 "threshold":{
                     "line":{"color": TEXT, "width":3},
                     "thickness":0.75, "value":90
                 }
             },
-            title={"text":"Coverage Interval 90%", "font":{"color": TEXT_DIM}}
+            title={"text":"Coverage Interval 90%", "font":{"color": TEXT_DIM, "size":14}}
         ))
         fig_cov.update_layout(
-            template="plotly_dark", paper_bgcolor=BG,
+            template="plotly_white", paper_bgcolor=BG,
+            font=dict(color=TEXT),
             height=280, margin=dict(t=40,b=0,l=0,r=0)
         )
         st.plotly_chart(fig_cov, use_container_width=True)
@@ -1229,13 +1425,14 @@ with tab_data:
             )
 
     fig_price.update_layout(
-        template="plotly_dark", paper_bgcolor=BG,
+        template="plotly_white", paper_bgcolor=BG,
         plot_bgcolor=BG, height=420,
+        font=dict(color=TEXT),
         margin=dict(l=0,r=0,t=10,b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
-        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0, font=dict(color=TEXT_DIM)),
+        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
         yaxis2=dict(showticklabels=False, gridcolor=GRID),
-        xaxis2=dict(gridcolor=GRID),
+        xaxis2=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
         barmode="stack"
     )
     st.plotly_chart(fig_price, use_container_width=True)
@@ -1257,13 +1454,14 @@ with tab_data:
         ))
         fig_sent.add_hline(y=0, line_dash="dash", line_color=TEXT_MUTE)
         fig_sent.update_layout(
-            template="plotly_dark", paper_bgcolor=BG,
+            template="plotly_white", paper_bgcolor=BG,
             plot_bgcolor=BG, height=280,
+            font=dict(color=TEXT),
             margin=dict(l=0,r=0,t=10,b=0),
-            yaxis=dict(title="Polarity (-1 to +1)", gridcolor=GRID,
+            yaxis=dict(title="Polarity (-1 to +1)", gridcolor=GRID, tickfont=dict(color=TEXT_DIM),
                        tickvals=[-1,-0.5,0,0.5,1],
                        ticktext=["Ext Fear","Fear","Neutral","Greed","Ext Greed"]),
-            xaxis=dict(gridcolor=GRID)
+            xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
         )
         if not sent_real:
             st.warning("Sentimen: data sintetis (API tidak tersedia)")
@@ -1311,11 +1509,12 @@ with tab_data:
                 yanchor="bottom", font=dict(color=AMBER, size=11)
             )
         fig_nf.update_layout(
-            template="plotly_dark", paper_bgcolor=BG,
+            template="plotly_white", paper_bgcolor=BG,
             plot_bgcolor=BG, height=280,
+            font=dict(color=TEXT),
             margin=dict(l=0,r=0,t=10,b=0),
-            yaxis=dict(title="Netflow (BTC)", gridcolor=GRID),
-            xaxis=dict(gridcolor=GRID)
+            yaxis=dict(title="Netflow (BTC)", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+            xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
         )
         st.plotly_chart(fig_nf, use_container_width=True)
 
@@ -1338,12 +1537,13 @@ with tab_data:
     ))
     fig_nfw.add_hline(y=0, line_dash="dash", line_color=TEXT_MUTE)
     fig_nfw.update_layout(
-        template="plotly_dark", paper_bgcolor=BG,
+        template="plotly_white", paper_bgcolor=BG,
         plot_bgcolor=BG, height=260,
+        font=dict(color=TEXT),
         margin=dict(l=0,r=0,t=10,b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
-        yaxis=dict(title="BTC", gridcolor=GRID),
-        xaxis=dict(gridcolor=GRID)
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0, font=dict(color=TEXT_DIM)),
+        yaxis=dict(title="BTC", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+        xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
     )
     st.plotly_chart(fig_nfw, use_container_width=True)
     st.markdown(f"""

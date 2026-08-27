@@ -191,11 +191,15 @@ code, .stMarkdown code {{ font-family: 'IBM Plex Mono', monospace; }}
     letter-spacing: .05em;
     text-transform: uppercase;
 }}
-[data-testid="stMetricValue"] {{
+[data-testid="stMetricValue"],
+[data-testid="stMetricValue"] * {{
     color: {TEXT} !important;
-    font-family:'IBM Plex Mono', monospace;
+    -webkit-text-fill-color: {TEXT} !important;
+    font-family:'IBM Plex Mono', monospace !important;
     font-size: 24px !important;
     font-weight: 600 !important;
+    background: none !important;
+    text-shadow: none !important;
 }}
 [data-testid="stMetricDelta"] {{ font-size: 13px !important; }}
 
@@ -623,7 +627,7 @@ is_price_fresh = price_staleness_days <= 1
 onchain_stale_days = result["onchain_staleness_days"]
 is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and onchain_stale_days <= 1)
 
-status_col0, status_col1, status_col2 = st.columns([1.4, 1, 4])
+status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
     if is_price_fresh:
         st.markdown(f"<span class='status-pill status-live'>● Harga Up-to-date</span>",
@@ -640,55 +644,59 @@ with status_col1:
         st.markdown(f"<span class='status-pill status-stale'>● On-chain tertinggal {onchain_stale_days} hari</span>",
                     unsafe_allow_html=True)
 with status_col2:
-    with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclaimer"):
-        st.markdown(f"""
-        <div class='info-box' style='margin-top:0'>
-        <b>Sumber data:</b><br>
-        • Harga: Yahoo Finance<br>
-        • Sentimen: Crypto Fear & Greed Index<br>
-        • On-Chain: CoinMetrics<br><br>
-        <b>Model yang berjalan live di dashboard ini:</b><br>
-        HMM Regime-Switching + XGBoost Quantile + Conformal Prediction.
-        <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-        Ini satu-satunya model yang dihitung ulang secara live. Lima model
-        pembanding pada halaman "Komparasi Model" adalah referensi statis
-        dari notebook eksperimen terpisah, bukan hasil live.
-        </span>
-        </div>
-        <div class='disclaimer-box'>
-        ⚠️ <b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
-        akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa
-        Perangkat Lunak, Universitas Gadjah Mada.
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("<div></div>", unsafe_allow_html=True)
 
-    # --- PANEL DEBUG SEMENTARA (Agustus 2026) ---
-    # Tujuan: memastikan apakah "tertinggal N hari" itu benar-benar karena
-    # Yahoo Finance menyajikan data yang lebih basi ke IP server Streamlit
-    # Community Cloud (indikasi kuat: banyak provider data finansial
-    # membatasi/menyajikan data lebih lama ke IP datacenter dibanding IP
-    # rumahan), ATAU karena sebab lain (cache belum benar-benar ke-clear,
-    # dsb). Panel ini menampilkan APA ADANYA data mentah + jam sistem
-    # server saat function fetch_price() terakhir benar-benar dieksekusi
-    # (bukan dari cache). Hapus expander ini setelah investigasi selesai.
-    with st.expander("🛠️ Debug — cek apa yang benar-benar diterima server dari Yahoo Finance"):
-        debug_now_utc = datetime.utcnow()
-        st.markdown(f"""
-        <div class='info-box' style='margin-top:0'>
-        <b>Jam sistem server (UTC) saat panel ini dirender:</b> {debug_now_utc.strftime('%Y-%m-%d %H:%M:%S')}<br>
-        <b>Jam sistem server (naive/local, biasanya = UTC di cloud):</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
-        <b>5 baris terakhir hasil fetch_price() (data mentah, sebelum join/forward-fill apa pun):</b>
-        </div>
-        """, unsafe_allow_html=True)
-        st.dataframe(df_p.tail(5), use_container_width=True)
-        st.caption(
-            "Kalau tanggal terakhir di tabel ini SUDAH menunjukkan 26/27 Agustus "
-            "tapi badge di atas masih bilang tertinggal — berarti masalahnya di "
-            "logika badge/cache, bukan di data mentahnya. Kalau tabel ini SENDIRI "
-            "masih mentok di tanggal lama walau baru saja klik Refresh Data, "
-            "berarti Yahoo Finance memang menyajikan data lebih basi ke server "
-            "ini (IP datacenter Streamlit Cloud), bukan masalah di kode."
-        )
+st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclaimer"):
+    st.markdown(f"""
+    <div class='info-box' style='margin-top:0'>
+    <b>Sumber data:</b><br>
+    • Harga: Yahoo Finance<br>
+    • Sentimen: Crypto Fear & Greed Index<br>
+    • On-Chain: CoinMetrics<br><br>
+    <b>Model yang berjalan live di dashboard ini:</b><br>
+    HMM Regime-Switching + XGBoost Quantile + Conformal Prediction.
+    <span style='font-size:11.5px;color:{TEXT_MUTE}'>
+    Ini satu-satunya model yang dihitung ulang secara live. Lima model
+    pembanding pada halaman "Komparasi Model" adalah referensi statis
+    dari notebook eksperimen terpisah, bukan hasil live.
+    </span>
+    </div>
+    <div class='disclaimer-box'>
+    ⚠️ <b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
+    akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa
+    Perangkat Lunak, Universitas Gadjah Mada.
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- PANEL DEBUG SEMENTARA (Agustus 2026) ---
+# Tujuan: memastikan apakah "tertinggal N hari" itu benar-benar karena
+# Yahoo Finance menyajikan data yang lebih basi ke IP server Streamlit
+# Community Cloud (indikasi kuat: banyak provider data finansial
+# membatasi/menyajikan data lebih lama ke IP datacenter dibanding IP
+# rumahan), ATAU karena sebab lain (cache belum benar-benar ke-clear,
+# dsb). Panel ini menampilkan APA ADANYA data mentah + jam sistem
+# server saat function fetch_price() terakhir benar-benar dieksekusi
+# (bukan dari cache). Hapus expander ini setelah investigasi selesai.
+with st.expander("🛠️ Debug — cek apa yang benar-benar diterima server dari Yahoo Finance"):
+    debug_now_utc = datetime.utcnow()
+    st.markdown(f"""
+    <div class='info-box' style='margin-top:0'>
+    <b>Jam sistem server (UTC) saat panel ini dirender:</b> {debug_now_utc.strftime('%Y-%m-%d %H:%M:%S')}<br>
+    <b>Jam sistem server (naive/local, biasanya = UTC di cloud):</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
+    <b>5 baris terakhir hasil fetch_price() (data mentah, sebelum join/forward-fill apa pun):</b>
+    </div>
+    """, unsafe_allow_html=True)
+    st.dataframe(df_p.tail(5), use_container_width=True)
+    st.caption(
+        "Kalau tanggal terakhir di tabel ini SUDAH menunjukkan 26/27 Agustus "
+        "tapi badge di atas masih bilang tertinggal — berarti masalahnya di "
+        "logika badge/cache, bukan di data mentahnya. Kalau tabel ini SENDIRI "
+        "masih mentok di tanggal lama walau baru saja klik Refresh Data, "
+        "berarti Yahoo Finance memang menyajikan data lebih basi ke server "
+        "ini (IP datacenter Streamlit Cloud), bukan masalah di kode."
+    )
 
 tab_pred, tab_comp, tab_data = st.tabs(["📈 Prediksi", "📊 Komparasi Model", "🔍 Analisis Data"])
 

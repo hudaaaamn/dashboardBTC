@@ -45,6 +45,17 @@
 #   diganti tab horizontal di bagian atas, layout dibuat responsif untuk
 #   tablet/mobile, dan komponen visual (kartu, badge, expander) dirancang
 #   ulang. Semua informasi & angka yang wajib tampil menurut PRD tetap ada.
+#
+# CATATAN TAMBAHAN (Agustus 2026 — kesegaran data HARGA):
+#   Ditambahkan badge kesegaran harga (mirip badge on-chain yang sudah
+#   ada) + tombol "Refresh Data" manual. Ini merespons kasus nyata: harga
+#   BTC-USD dari Yahoo Finance (via yfinance) kadang tampak "telat 1 hari"
+#   ketika dashboard dibuka pagi/siang WIB, karena candle harian crypto di
+#   Yahoo Finance sering final berdasarkan hari kalender US Eastern (jauh
+#   di belakang WIB/UTC+7), ditambah cache Streamlit (ttl=3600) yang baru
+#   dicek ulang saat ada kunjungan baru. Badge ini TIDAK mengubah logika
+#   pipeline/model sama sekali — murni lapisan transparansi + tombol untuk
+#   memaksa bypass cache tanpa menunggu ttl habis sendiri.
 # ============================================================
 
 import streamlit as st
@@ -260,13 +271,12 @@ code, .stMarkdown code {{ font-family: 'IBM Plex Mono', monospace; }}
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
 # ============================================================
-def _fetch_price_yfinance(start):
+@st.cache_data(ttl=3600)
+def fetch_price(start="2021-01-01"):
     import yfinance as yf
     df = yf.download("BTC-USD", start=start,
                      end=datetime.now().strftime("%Y-%m-%d"),
                      interval="1d", progress=False)
-    if df is None or len(df) == 0:
-        return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
@@ -275,74 +285,6 @@ def _fetch_price_yfinance(start):
     df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
     df.columns = ["open","high","low","close","volume"]
     return df.dropna()
-
-
-def _fetch_price_binance(start):
-    """
-    Fallback sumber harga BTC lewat Binance public API (tanpa API key).
-    Dipakai kalau yfinance gagal/kosong -- kasus umum saat dashboard
-    dijalankan dari server cloud (Yahoo Finance sering rate-limit/blok
-    IP shared milik penyedia cloud, sementara Binance klines lebih
-    longgar untuk request publik semacam ini).
-    """
-    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
-    end_ms   = int(datetime.now().timestamp() * 1000)
-    rows = []
-    cursor = start_ms
-    url = "https://api.binance.com/api/v3/klines"
-    while cursor < end_ms:
-        params = {
-            "symbol": "BTCUSDT",
-            "interval": "1d",
-            "startTime": cursor,
-            "limit": 1000,
-        }
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        batch = r.json()
-        if not batch:
-            break
-        rows.extend(batch)
-        last_open_time = batch[-1][0]
-        next_cursor = last_open_time + 24 * 60 * 60 * 1000
-        if next_cursor <= cursor:
-            break
-        cursor = next_cursor
-        if len(batch) < 1000:
-            break
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows, columns=[
-        "open_time","open","high","low","close","volume",
-        "close_time","quote_asset_volume","num_trades",
-        "taker_buy_base","taker_buy_quote","ignore",
-    ])
-    df["date"] = pd.to_datetime(df["open_time"], unit="ms").dt.normalize()
-    df = df[["date","open","high","low","close","volume"]].set_index("date")
-    for col in ["open","high","low","close","volume"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna()
-
-
-@st.cache_data(ttl=3600)
-def fetch_price(start="2021-01-01"):
-    try:
-        df = _fetch_price_yfinance(start)
-        if len(df) > 0:
-            return df
-    except Exception:
-        pass
-    # Fallback: yfinance gagal atau balikin data kosong (mis. IP server
-    # cloud diblokir/rate-limited oleh Yahoo Finance) -> pakai Binance.
-    df = _fetch_price_binance(start)
-    if len(df) == 0:
-        raise RuntimeError(
-            "Gagal mengambil data harga BTC dari yfinance maupun Binance. "
-            "Coba lagi beberapa saat lagi."
-        )
-    return df
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
@@ -606,18 +548,30 @@ def build_features_and_predict():
 # ============================================================
 # TOPBAR — branding (bagian yang tidak butuh data dulu)
 # ============================================================
-st.markdown("""
-<div class='topbar'>
-    <div class='topbar-brand'>
-        <div class='topbar-coin'>₿</div>
-        <div class='topbar-title'>
-            <h1>BTC Dashboard</h1>
-            <p>Prediksi probabilistik harga Bitcoin · HMM + XGBoost Quantile + Conformal</p>
+topbar_col, refresh_col = st.columns([6, 1])
+with topbar_col:
+    st.markdown("""
+    <div class='topbar'>
+        <div class='topbar-brand'>
+            <div class='topbar-coin'>₿</div>
+            <div class='topbar-title'>
+                <h1>BTC Dashboard</h1>
+                <p>Prediksi probabilistik harga Bitcoin · HMM + XGBoost Quantile + Conformal</p>
+            </div>
         </div>
+        <div id='topbar-status-slot'></div>
     </div>
-    <div id='topbar-status-slot'></div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+with refresh_col:
+    # Tombol refresh manual: memaksa bypass cache (ttl=3600) tanpa perlu
+    # menunggu 1 jam. Berguna terutama saat candle harian BTC-USD di
+    # Yahoo Finance baru saja final (lihat catatan di kepala berkas soal
+    # delay basis hari US Eastern vs WIB).
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Refresh Data", use_container_width=True,
+                 help="Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"):
+        st.cache_data.clear()
+        st.rerun()
 
 # ============================================================
 # LOAD DATA (dengan spinner)
@@ -635,11 +589,28 @@ with st.spinner("Memuat data dan menjalankan model..."):
         st.error(f"Gagal memuat data: {e}")
         st.stop()
 
-# --- Status kesegaran data on-chain + panel info (pengganti sidebar) ---
+# --- Status kesegaran data HARGA (baru) + on-chain + panel info ---
+# Kesegaran harga dihitung dari selisih tanggal Close terakhir (last_date,
+# hasil fetch_price()) terhadap tanggal hari ini. Selisih >1 hari berarti
+# candle harian BTC-USD terbaru dari Yahoo Finance belum final/ter-publish
+# (biasa terjadi karena basis hari Yahoo untuk crypto condong ke US
+# Eastern, jauh di belakang WIB) — BUKAN berarti dashboard/model rusak.
+price_last_date   = result["last_date"]
+price_staleness_days = (pd.Timestamp(datetime.now().date()) - pd.Timestamp(price_last_date.date())).days
+is_price_fresh = price_staleness_days <= 1
+
 onchain_stale_days = result["onchain_staleness_days"]
 is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and onchain_stale_days <= 1)
 
-status_col1, status_col2 = st.columns([1, 5])
+status_col0, status_col1, status_col2 = st.columns([1.4, 1, 4])
+with status_col0:
+    if is_price_fresh:
+        st.markdown(f"<span class='status-pill status-live'>● Harga Up-to-date</span>",
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(
+            f"<span class='status-pill status-stale'>● Harga tertinggal {price_staleness_days} hari</span>",
+            unsafe_allow_html=True)
 with status_col1:
     if is_onchain_fresh:
         st.markdown(f"<span class='status-pill status-live'>● On-chain Live</span>",
@@ -682,6 +653,23 @@ with tab_pred:
         <p>Model usulan: HMM Regime-Switching · XGBoost Quantile · Conformal Prediction</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # --- Peringatan transparansi jika HARGA belum up-to-date (baru) ---
+    if not is_price_fresh:
+        st.markdown(f"""
+        <div class='warn-box'>
+        ⚠️ <b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
+        BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
+        <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
+        lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
+        tersebut, bukan hari ini. Ini biasanya terjadi karena Yahoo Finance
+        menutup candle harian instrumen crypto berdasarkan basis hari
+        <b>US Eastern</b> (jauh di belakang WIB), atau candle terbaru
+        memang belum di-publish sumbernya. Coba klik tombol
+        <b>🔄 Refresh Data</b> di kanan atas beberapa saat lagi untuk
+        mengecek ulang tanpa menunggu cache (1 jam) habis sendiri.
+        </div>
+        """, unsafe_allow_html=True)
 
     # --- Peringatan transparansi jika on-chain tidak live ---
     if not is_onchain_fresh:

@@ -854,6 +854,8 @@ with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclai
     </div>
     """, unsafe_allow_html=True)
 
+tab_pred, tab_comp, tab_data = st.tabs(["📈 Prediksi", "📊 Komparasi Model", "🔍 Analisis Data"])
+
 # ============================================================
 # HALAMAN 1: PREDIKSI
 # ============================================================

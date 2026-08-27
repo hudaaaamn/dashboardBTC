@@ -353,9 +353,50 @@ button:focus, button:focus-visible,
     outline-offset: 2px;
     box-shadow: none !important;
 }}
+/* ---- Status widget bawaan Streamlit ("Running fungsi_x()...") ----
+   Muncul otomatis di kiri-atas konten saat sebuah fungsi ber-decorator
+   @st.cache_data (mis. build_features_and_predict()) sedang dieksekusi.
+   Ini elemen "chrome" internal Streamlit sendiri (bukan hasil st.markdown
+   kita), jadi selalu memakai tema gelap bawaan Streamlit terlepas dari
+   CSS halaman ini -- perlu di-override manual. Beberapa versi Streamlit
+   memakai testid berbeda, jadi beberapa selector dipasang sekaligus agar
+   tetap kena di versi manapun. */
+[data-testid="stStatusWidget"],
+[data-testid="stStatusWidget"] > div,
+div[class*="StatusWidget"] {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
+}}
+[data-testid="stStatusWidget"] *,
+div[class*="StatusWidget"] * {{
+    color: {TEXT_DIM} !important;
+    fill: {TEXT_DIM} !important;
+    -webkit-text-fill-color: {TEXT_DIM} !important;
+}}
+[data-testid="stStatusWidget"] code {{
+    color: {TEAL} !important;
+    -webkit-text-fill-color: {TEAL} !important;
+    background: {TEAL_SOFT} !important;
+    border-radius: 4px;
+    padding: 1px 4px;
+}}
+
 [data-testid="stExpander"] summary:focus,
-[data-testid="stExpander"] summary:hover {{
-    box-shadow: none !important; background: {SURFACE_2};
+[data-testid="stExpander"] summary:hover,
+[data-testid="stExpander"] summary:active,
+[data-testid="stExpander"] details[open] > summary {{
+    box-shadow: none !important;
+    background: {SURFACE_2} !important;
+    color: {TEXT} !important;
+}}
+[data-testid="stExpander"] summary:focus *,
+[data-testid="stExpander"] summary:hover *,
+[data-testid="stExpander"] summary:active *,
+[data-testid="stExpander"] details[open] > summary * {{
+    color: {TEXT} !important;
+    fill: {TEXT} !important;
 }}
 .stButton > button:focus:not(:focus-visible) {{ box-shadow:none !important; outline:none !important; }}
 
@@ -394,10 +435,11 @@ button:focus, button:focus-visible,
    ikut CSS di sini — jaminan selalu terang, di browser/perangkat manapun. */
 .table-wrap {{
     background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
-    overflow:hidden; margin-top:8px;
+    overflow-x:auto; overflow-y:hidden; margin-top:8px;
+    -webkit-overflow-scrolling: touch;
 }}
 table.apple-table {{
-    width:100%; border-collapse:collapse; font-size:13.5px;
+    width:100%; min-width:880px; border-collapse:collapse; font-size:13.5px;
     color:{TEXT};
 }}
 table.apple-table thead th {{
@@ -1277,7 +1319,8 @@ with tab_comp:
                 plot_bgcolor=BG, height=320,
                 font=dict(color=TEXT),
                 margin=dict(l=0,r=80,t=40,b=0),
-                xaxis=dict(range=[0.98, 0.990], gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
+                xaxis=dict(range=[df_res["R2"].min()-0.003, df_res["R2"].max()+0.001],
+                           gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_r2, use_container_width=True)
@@ -1287,9 +1330,7 @@ with tab_comp:
                 orientation="h", marker_color=bar_colors,
                 text=[f"{v:.1f}%" for v in df_res["DirAcc"]], textposition="outside"
             ))
-            fig_dir.add_vline(x=50, line_dash="dash", line_color=TEXT_DIM,
-                              annotation_text="Random (50%)",
-                              annotation_font_color=TEXT_DIM)
+            fig_dir.add_vline(x=50, line_dash="dash", line_color=TEXT_DIM)
             fig_dir.update_layout(
                 title=dict(text="Directional Accuracy — lebih tinggi lebih baik", font=dict(color=TEXT, size=14)),
                 template="plotly_white", paper_bgcolor=BG,
@@ -1300,6 +1341,7 @@ with tab_comp:
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
             st.plotly_chart(fig_dir, use_container_width=True)
+            st.caption("Garis putus-putus abu-abu menandai baseline tebak acak (50%).")
 
     with tab3:
         st.info("Metrik probabilistik hanya tersedia untuk Model Usulan "

@@ -854,41 +854,6 @@ with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclai
     </div>
     """, unsafe_allow_html=True)
 
-# --- PANEL DEBUG SEMENTARA (Agustus 2026) ---
-# Tujuan: memastikan apakah "tertinggal N hari" itu benar-benar karena
-# Yahoo Finance menyajikan data yang lebih basi ke IP server Streamlit
-# Community Cloud (indikasi kuat: banyak provider data finansial
-# membatasi/menyajikan data lebih lama ke IP datacenter dibanding IP
-# rumahan), ATAU karena sebab lain (cache belum benar-benar ke-clear,
-# dsb). Panel ini menampilkan APA ADANYA data mentah + jam sistem
-# server saat function fetch_price() terakhir benar-benar dieksekusi
-# (bukan dari cache). Hapus expander ini setelah investigasi selesai.
-with st.expander("🛠️ Debug — cek apa yang benar-benar diterima server dari Yahoo Finance"):
-    debug_now_utc = datetime.utcnow()
-    st.markdown(f"""
-    <div class='info-box' style='margin-top:0'>
-    <b>Jam sistem server (UTC) saat panel ini dirender:</b> {debug_now_utc.strftime('%Y-%m-%d %H:%M:%S')}<br>
-    <b>Jam sistem server (naive/local, biasanya = UTC di cloud):</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
-    <b>5 baris terakhir hasil fetch_price() (data mentah, sebelum join/forward-fill apa pun):</b>
-    </div>
-    """, unsafe_allow_html=True)
-    debug_df = df_p.tail(5).reset_index()
-    debug_df["date"] = debug_df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    for c in ["open", "high", "low", "close"]:
-        debug_df[c] = debug_df[c].map(lambda v: f"{v:,.4f}")
-    debug_df["volume"] = debug_df["volume"].map(lambda v: f"{v:,.0f}")
-    render_table(debug_df)
-    st.caption(
-        "Kalau tanggal terakhir di tabel ini SUDAH menunjukkan 26/27 Agustus "
-        "tapi badge di atas masih bilang tertinggal — berarti masalahnya di "
-        "logika badge/cache, bukan di data mentahnya. Kalau tabel ini SENDIRI "
-        "masih mentok di tanggal lama walau baru saja klik Refresh Data, "
-        "berarti Yahoo Finance memang menyajikan data lebih basi ke server "
-        "ini (IP datacenter Streamlit Cloud), bukan masalah di kode."
-    )
-
-tab_pred, tab_comp, tab_data = st.tabs(["📈 Prediksi", "📊 Komparasi Model", "🔍 Analisis Data"])
-
 # ============================================================
 # HALAMAN 1: PREDIKSI
 # ============================================================

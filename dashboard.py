@@ -274,17 +274,38 @@ code, .stMarkdown code {{ font-family: 'IBM Plex Mono', monospace; }}
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     import yfinance as yf
-    df = yf.download("BTC-USD", start=start,
-                     end=datetime.now().strftime("%Y-%m-%d"),
-                     interval="1d", progress=False)
+    # PERBAIKAN (Agustus 2026 — bug "tertinggal 2 hari" walau candle H-1
+    # sudah final di Yahoo Finance):
+    # SEBELUMNYA memakai end=datetime.now().strftime("%Y-%m-%d") (exclusive).
+    # Parameter 'end' pada yfinance ternyata bisa memotong LEBIH dari satu
+    # hari karena dikonversi lewat timezone internal yfinance (bukan UTC
+    # bersih), bukan cuma membuang hari ini seperti yang diharapkan. Efeknya:
+    # candle H-1 yang sebenarnya SUDAH final & tersedia di Yahoo Finance ikut
+    # terpotong, sehingga last_date jadi H-2.
+    # PERBAIKAN: jangan batasi 'end' sama sekali (ambil semua data terbaru
+    # yang tersedia dari yfinance, termasuk kemungkinan baris "hari ini").
+    # Lalu kita sendiri yang membuang baris hari ini secara eksplisit
+    # berdasarkan tanggal UTC (bukan lewat parameter end bawaan yfinance),
+    # karena BTC-USD diperdagangkan 24 jam nonstop -- baris "hari ini" itu
+    # masih live/berjalan, bukan candle harian yang sudah final/closed.
+    # Basis UTC dipilih supaya konsisten dengan cara Yahoo Finance sendiri
+    # menandai waktu real-time-nya (lihat "As of ... UTC" di halaman Yahoo
+    # Finance untuk BTC-USD).
+    df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
     date_col = "Date" if "Date" in df.columns else df.columns[0]
     df["date"] = pd.to_datetime(df[date_col])
+    if df["date"].dt.tz is not None:
+        df["date"] = df["date"].dt.tz_localize(None)
     df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
     df.columns = ["open","high","low","close","volume"]
-    return df.dropna()
+    df = df.dropna()
+
+    today_utc = pd.Timestamp(datetime.utcnow().date())
+    df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
+    return df
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
@@ -640,6 +661,34 @@ with status_col2:
         Perangkat Lunak, Universitas Gadjah Mada.
         </div>
         """, unsafe_allow_html=True)
+
+    # --- PANEL DEBUG SEMENTARA (Agustus 2026) ---
+    # Tujuan: memastikan apakah "tertinggal N hari" itu benar-benar karena
+    # Yahoo Finance menyajikan data yang lebih basi ke IP server Streamlit
+    # Community Cloud (indikasi kuat: banyak provider data finansial
+    # membatasi/menyajikan data lebih lama ke IP datacenter dibanding IP
+    # rumahan), ATAU karena sebab lain (cache belum benar-benar ke-clear,
+    # dsb). Panel ini menampilkan APA ADANYA data mentah + jam sistem
+    # server saat function fetch_price() terakhir benar-benar dieksekusi
+    # (bukan dari cache). Hapus expander ini setelah investigasi selesai.
+    with st.expander("🛠️ Debug — cek apa yang benar-benar diterima server dari Yahoo Finance"):
+        debug_now_utc = datetime.utcnow()
+        st.markdown(f"""
+        <div class='info-box' style='margin-top:0'>
+        <b>Jam sistem server (UTC) saat panel ini dirender:</b> {debug_now_utc.strftime('%Y-%m-%d %H:%M:%S')}<br>
+        <b>Jam sistem server (naive/local, biasanya = UTC di cloud):</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
+        <b>5 baris terakhir hasil fetch_price() (data mentah, sebelum join/forward-fill apa pun):</b>
+        </div>
+        """, unsafe_allow_html=True)
+        st.dataframe(df_p.tail(5), use_container_width=True)
+        st.caption(
+            "Kalau tanggal terakhir di tabel ini SUDAH menunjukkan 26/27 Agustus "
+            "tapi badge di atas masih bilang tertinggal — berarti masalahnya di "
+            "logika badge/cache, bukan di data mentahnya. Kalau tabel ini SENDIRI "
+            "masih mentok di tanggal lama walau baru saja klik Refresh Data, "
+            "berarti Yahoo Finance memang menyajikan data lebih basi ke server "
+            "ini (IP datacenter Streamlit Cloud), bukan masalah di kode."
+        )
 
 tab_pred, tab_comp, tab_data = st.tabs(["📈 Prediksi", "📊 Komparasi Model", "🔍 Analisis Data"])
 

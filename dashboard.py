@@ -64,6 +64,7 @@ import numpy as np
 import requests
 import io
 import os
+import urllib.parse
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -115,6 +116,63 @@ GRID      = "#e5e5ea"
 
 REGIME_COLORS = {0: RED, 1: TEXT_MUTE, 2: GREEN}
 REGIME_NAMES  = {0: "Bear", 1: "Sideways", 2: "Bull"}
+
+# ============================================================
+# IKON KUSTOM (pengganti emoji 📈📊🔍ℹ️⚠️)
+# ------------------------------------------------------------
+# Emoji bawaan platform (📈📊🔍ℹ️⚠️) dirender oleh OS/browser sendiri —
+# gaya, warna, dan proporsinya beda-beda antar perangkat, dan sering
+# terkesan generik/"AI slop" karena bukan bagian dari sistem desain
+# halaman ini. Sebagai gantinya dipakai ikon garis custom gaya
+# SF Symbols/Lucide (stroke tunggal, ujung membulat, tanpa gradient/fill
+# glossy), digambar sebagai SVG lalu di-encode jadi data-URI.
+#
+# Untuk ikon pada st.tabs()/st.expander() (dua widget native Streamlit
+# yang labelnya cuma menerima teks polos, tidak menerima HTML), ikon
+# disuntik lewat CSS `mask-image` pada pseudo-element ::before — dengan
+# `background-color: currentColor` warnanya otomatis ikut warna teks tab
+# (redup saat idle, gelap saat aktif) tanpa perlu aset terpisah per state.
+# Untuk ikon di dalam blok HTML kustom (warn-box/disclaimer-box) yang
+# memang sudah lewat st.markdown(unsafe_allow_html=True), ikon ditulis
+# langsung sebagai inline SVG (WARN_ICON) karena warnanya tetap (merah).
+# ============================================================
+def _icon_svg(paths: str) -> str:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+        'fill="none" stroke="white" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>'
+    )
+    return "data:image/svg+xml," + urllib.parse.quote(svg)
+
+# Tab "Prediksi" — garis tren naik (gaya ikon "trending-up")
+ICON_TREND  = _icon_svg(
+    '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>'
+    '<polyline points="17 6 23 6 23 12"/>'
+)
+# Tab "Komparasi Model" — batang perbandingan (gaya ikon "bar-chart")
+ICON_BARS   = _icon_svg(
+    '<path d="M3 3v18h18"/><path d="M18 17V9"/>'
+    '<path d="M13 17V5"/><path d="M8 17v-3"/>'
+)
+# Tab "Analisis Data" — kaca pembesar (gaya ikon "search")
+ICON_SEARCH = _icon_svg(
+    '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'
+)
+# Expander "Tentang dashboard" — huruf i dalam lingkaran (gaya ikon "info")
+ICON_INFO   = _icon_svg(
+    '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
+)
+
+# Ikon peringatan/disclaimer — lingkaran merah + tanda seru, dipakai
+# langsung sebagai inline SVG (bukan mask) di dalam blok HTML kustom.
+WARN_ICON = (
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;'
+    'vertical-align:-2.5px;margin-right:6px;flex-shrink:0;">'
+    f'<circle cx="12" cy="12" r="9.4" stroke="{RED}" stroke-width="2.3"/>'
+    f'<rect x="10.6" y="6.2" width="2.8" height="7.8" rx="1.4" fill="{RED}"/>'
+    f'<circle cx="12" cy="17" r="1.6" fill="{RED}"/></svg>'
+)
 
 # ============================================================
 # CUSTOM CSS
@@ -216,6 +274,55 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
 }}
 .stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent; }}
 .stTabs [data-baseweb="tab-border"] {{ display:none; }}
+
+/* ---- Ikon tab & expander (custom line-icon, pengganti emoji) ----
+   Lihat blok "IKON KUSTOM" di atas untuk alasan & definisi ICON_*.
+   `background-color: currentColor` + CSS mask supaya warna ikon
+   otomatis mengikuti warna teks tab (redup saat idle, gelap saat aktif)
+   tanpa perlu aset terpisah per-state. */
+.stTabs [data-baseweb="tab"] {{
+    display:flex !important; align-items:center; gap:8px;
+}}
+.stTabs [data-baseweb="tab"]::before {{
+    content:""; width:16px; height:16px; flex-shrink:0;
+    background-color: currentColor;
+    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+    -webkit-mask-size:contain; mask-size:contain;
+    -webkit-mask-position:center; mask-position:center;
+}}
+.stTabs [data-baseweb="tab"]:nth-of-type(1)::before {{
+    -webkit-mask-image:url('{ICON_TREND}'); mask-image:url('{ICON_TREND}');
+}}
+.stTabs [data-baseweb="tab"]:nth-of-type(2)::before {{
+    -webkit-mask-image:url('{ICON_BARS}'); mask-image:url('{ICON_BARS}');
+}}
+.stTabs [data-baseweb="tab"]:nth-of-type(3)::before {{
+    -webkit-mask-image:url('{ICON_SEARCH}'); mask-image:url('{ICON_SEARCH}');
+}}
+[data-testid="stExpander"] summary {{
+    display:flex !important; align-items:center; gap:9px;
+}}
+[data-testid="stExpander"] summary::before {{
+    content:""; width:16px; height:16px; flex-shrink:0;
+    background-color:{TEXT_DIM};
+    -webkit-mask-image:url('{ICON_INFO}'); mask-image:url('{ICON_INFO}');
+    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+    -webkit-mask-size:contain; mask-size:contain;
+    -webkit-mask-position:center; mask-position:center;
+}}
+
+/* ---- Hilangkan sisa indikator underline merah bawaan BaseWeb ----
+   Tab aktif sudah ditandai lewat pill putih ({{{{[aria-selected="true"]}}}}
+   di atas) ala segmented-control apple.com. Indikator underline bawaan
+   Streamlit/BaseWeb (warna tema merah, lebar mengikuti teks) tidak ikut
+   didesain ulang oleh pill tsb, sehingga tampil sebagai sisa garis pendek
+   di bawah teks yang terlihat seperti "terpotong". Dihilangkan total
+   supaya tidak dobel dengan pill putih yang sudah jadi penanda utama. */
+.stTabs [data-baseweb="tab"],
+.stTabs [data-baseweb="tab"] * {{
+    border-bottom:none !important;
+    box-shadow:none !important;
+}}
 
 /* ---- Metric cards ---- */
 [data-testid="stMetric"] {{
@@ -874,7 +981,7 @@ with status_col2:
 
 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclaimer"):
+with st.expander("Tentang dashboard ini — sumber data, model, & disclaimer"):
     st.markdown(f"""
     <div class='info-box' style='margin-top:0'>
     <b>Sumber data:</b><br>
@@ -890,13 +997,13 @@ with st.expander("ℹ️ Tentang dashboard ini — sumber data, model, & disclai
     </span>
     </div>
     <div class='disclaimer-box'>
-    ⚠️ <b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
+    {WARN_ICON}<b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
     akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa
     Perangkat Lunak, Universitas Gadjah Mada.
     </div>
     """, unsafe_allow_html=True)
 
-tab_pred, tab_comp, tab_data = st.tabs(["📈 Prediksi", "📊 Komparasi Model", "🔍 Analisis Data"])
+tab_pred, tab_comp, tab_data = st.tabs(["Prediksi", "Komparasi Model", "Analisis Data"])
 
 # ============================================================
 # HALAMAN 1: PREDIKSI
@@ -913,7 +1020,7 @@ with tab_pred:
     if not is_price_fresh:
         st.markdown(f"""
         <div class='warn-box'>
-        ⚠️ <b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
+        {WARN_ICON}<b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
         BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
         <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
         lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
@@ -930,7 +1037,7 @@ with tab_pred:
     if not is_onchain_fresh:
         st.markdown(f"""
         <div class='warn-box'>
-        ⚠️ <b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
+        {WARN_ICON}<b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
         Community CSV) terakhir memiliki data riil pada
         <b>{result['onchain_last_real_date'].strftime('%d %B %Y')}</b>
         ({onchain_stale_days} hari lalu). Fitur netflow pada prediksi ini
@@ -1107,7 +1214,7 @@ with tab_pred:
 
     st.markdown(f"""
     <div class='disclaimer-box'>
-    ⚠️ <b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
+    {WARN_ICON}<b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
     Tugas Akhir Program Studi Teknologi Rekayasa Perangkat Lunak, Universitas Gadjah Mada.
     Prediksi yang ditampilkan <b>bukan merupakan nasihat investasi</b> dan tidak boleh
     dijadikan dasar keputusan finansial.

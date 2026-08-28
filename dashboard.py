@@ -1329,7 +1329,7 @@ with tab_comp:
         maupun LSTM.
         """)
 
-    with st.expander("Ablation Study (Kontribusi Regime HMM & Sentiment-Weighted Netflow"):
+    with st.expander("Ablation Study (Kontribusi Regime HMM & Sentiment-Weighted Netflow)"):
         st.markdown("""
         Dua varian model diuji terhadap Model Usulan FULL, dengan split dan
         hyperparameter identik:
@@ -1348,7 +1348,7 @@ with tab_comp:
         indikator kondisi pasar (lihat halaman "Analisis Data").
         """)
 
-    with st.expander("Validasi Kuantitatif Strategi Forward-Fill (Step 14–16)"):
+    with st.expander("Validasi Kuantitatif Strategi Forward-Fill"):
         st.markdown("""
         Untuk menguji apakah forward-fill data on-chain (dipakai saat sumber
         gratis tertinggal, lihat peringatan di halaman "Prediksi") aman

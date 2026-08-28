@@ -1,13 +1,4 @@
 [theme]
-# Mengunci base theme Streamlit ke "light" secara eksplisit.
-# TANPA ini, beberapa widget native Streamlit (st.dataframe, expander,
-# tombol, indikator "Running ..." saat cache berjalan) mengikuti preferensi
-# dark-mode sistem/browser pengguna secara otomatis — sehingga warna teks
-# defaultnya (putih/abu terang, dirancang untuk latar gelap) jadi nyaris
-# tak terlihat di atas latar putih yang kita pakai lewat CSS kustom di
-# dashboard.py. Mengunci base="light" + menyamakan warnanya dengan token
-# desain di dashboard.py membuat SEMUA komponen (custom maupun native)
-# konsisten satu bahasa visual terang ala apple.com.
 base = "light"
 primaryColor = "#e8830f"
 backgroundColor = "#f5f5f7"

@@ -490,6 +490,20 @@ div[class*="StatusWidget"] * {{
     padding: 1px 4px;
 }}
 
+/* ---- Tooltip bawaan Streamlit (dari parameter help= pada st.button) ----
+   Default: kotak gelap solid + shadow + teks putih. Diganti jadi tanpa
+   background/shadow, teks hitam polos mengikuti warna teks halaman. */
+[data-testid="stTooltipContent"] {{
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    color: {TEXT} !important;
+}}
+[data-testid="stTooltipContent"] * {{
+    color: {TEXT} !important;
+    -webkit-text-fill-color: {TEXT} !important;
+}}
+
 [data-testid="stExpander"] summary:focus,
 [data-testid="stExpander"] summary:hover,
 [data-testid="stExpander"] summary:active,
@@ -515,7 +529,7 @@ div[class*="StatusWidget"] * {{
    terang", supaya <button> (Refresh Data) tidak lagi ikut dipaksa gelap. */
 :root, html {{ color-scheme: light !important; }}
 
-/* ---- Tombol (Refresh Data) — pill khas Apple ----
+/* ---- Tombol (Refresh Data) — pill hijau ----
    Selector diperkuat (atribut kind + testid) supaya menang dari style
    bawaan BaseWeb yang kadang punya spesifisitas lebih tinggi. */
 .stButton > button,
@@ -523,14 +537,14 @@ div[class*="StatusWidget"] * {{
 [data-testid="stBaseButton-secondary"],
 [data-testid="baseButton-secondary"] {{
     border-radius:980px !important; font-weight:590 !important;
-    border:1px solid {BORDER} !important; background:{SURFACE} !important;
-    color:{TEXT} !important; -webkit-text-fill-color:{TEXT} !important;
+    border:1px solid #22c55e !important; background:#22c55e !important;
+    color:#ffffff !important; -webkit-text-fill-color:#ffffff !important;
     transition: background 0.15s ease;
 }}
 .stButton > button *, [data-testid="stBaseButton-secondary"] * {{
-    color:{TEXT} !important; -webkit-text-fill-color:{TEXT} !important;
+    color:#ffffff !important; -webkit-text-fill-color:#ffffff !important;
 }}
-.stButton > button:hover {{ background:{SURFACE_2} !important; border-color:{TEXT_MUTE} !important; }}
+.stButton > button:hover {{ background:#16a34a !important; border-color:#16a34a !important; }}
 
 /* ---- Tabel HTML kustom (pengganti st.dataframe) ----
    st.dataframe dirender lewat komponen grid (canvas) milik Streamlit yang
@@ -611,23 +625,6 @@ def render_table(df: pd.DataFrame):
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     import yfinance as yf
-    # PERBAIKAN (Agustus 2026 — bug "tertinggal 2 hari" walau candle H-1
-    # sudah final di Yahoo Finance):
-    # SEBELUMNYA memakai end=datetime.now().strftime("%Y-%m-%d") (exclusive).
-    # Parameter 'end' pada yfinance ternyata bisa memotong LEBIH dari satu
-    # hari karena dikonversi lewat timezone internal yfinance (bukan UTC
-    # bersih), bukan cuma membuang hari ini seperti yang diharapkan. Efeknya:
-    # candle H-1 yang sebenarnya SUDAH final & tersedia di Yahoo Finance ikut
-    # terpotong, sehingga last_date jadi H-2.
-    # PERBAIKAN: jangan batasi 'end' sama sekali (ambil semua data terbaru
-    # yang tersedia dari yfinance, termasuk kemungkinan baris "hari ini").
-    # Lalu kita sendiri yang membuang baris hari ini secara eksplisit
-    # berdasarkan tanggal UTC (bukan lewat parameter end bawaan yfinance),
-    # karena BTC-USD diperdagangkan 24 jam nonstop -- baris "hari ini" itu
-    # masih live/berjalan, bukan candle harian yang sudah final/closed.
-    # Basis UTC dipilih supaya konsisten dengan cara Yahoo Finance sendiri
-    # menandai waktu real-time-nya (lihat "As of ... UTC" di halaman Yahoo
-    # Finance untuk BTC-USD).
     df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -727,29 +724,16 @@ def fetch_onchain(start="2021-01-01"):
 def build_features_and_predict():
     from hmmlearn.hmm import GaussianHMM
     import xgboost as xgb
-    # Catatan: RobustScaler TIDAK diimpor di sini (sebelumnya diimpor tapi
-    # tak pernah dipakai). Model usulan berbasis pohon (HMM Gaussian pada
-    # 2 fitur skala kecil + XGBoost) tidak memerlukan scaling fitur.
-    # RobustScaler pada Tabel 3.2 relevan untuk model pembanding yang
-    # sensitif terhadap skala (SVR), yang dilatih terpisah di notebook
-    # Colab — bukan di dalam dashboard.py ini.
 
     # Fetch semua data
     df_p        = fetch_price()
     df_s, _     = fetch_sentiment()
     df_o, onchain_live = fetch_onchain()
 
-    # --- Timeline utama mengikuti HARGA (selalu paling fresh) ---
-    # Sentimen & on-chain di-left-join lalu forward-fill, supaya tanggal
-    # terbaru (hari ini/kemarin) tidak ikut kepotong hanya karena salah
-    # satu sumber lain belum update. Ini krusial untuk prediksi "besok"
-    # yang benar-benar mengacu ke harga terkini, bukan ke tanggal terakhir
-    # on-chain tersedia.
     df = df_p[["close"]].copy()
     df = df.join(df_s[["polarity"]], how="left")
     df = df.join(df_o[["exchange_netflow"]], how="left")
 
-    # Catat kapan on-chain terakhir punya nilai ASLI (sebelum forward-fill)
     onchain_last_real_date = df_o.index.max() if len(df_o) else None
     last_price_date = df_p.index.max()
     onchain_staleness_days = (
@@ -757,7 +741,6 @@ def build_features_and_predict():
         if onchain_last_real_date is not None else None
     )
 
-    # Forward-fill: sentimen (jaga-jaga ada gap) dan on-chain (fallback utama)
     df["polarity"]         = df["polarity"].ffill()
     df["exchange_netflow"] = df["exchange_netflow"].ffill()
     df = df.dropna(subset=["close","polarity","exchange_netflow"])
@@ -773,10 +756,6 @@ def build_features_and_predict():
         df[f"return_lag_{lag}"] = df["log_return"].shift(lag)
     df["netflow_change"]   = df["exchange_netflow"].diff()
 
-    # Selama periode on-chain "beku" (forward-fill), netflow_change dipaksa
-    # 0 secara eksplisit. Nilainya memang otomatis ~0 karena diff() dari
-    # angka yang sama, tapi dibuat eksplisit agar perilakunya jelas dan
-    # tidak tergantung presisi floating point.
     if onchain_last_real_date is not None:
         stale_mask = df.index > onchain_last_real_date
         df.loc[stale_mask, "netflow_change"] = 0.0
@@ -785,19 +764,6 @@ def build_features_and_predict():
     df["sentiment_ma_7"]   = df["polarity"].rolling(7).mean()
     df["netflow_weighted"] = df["exchange_netflow"] * (1 + df["polarity"])
 
-    # HMM regime
-    # PERBAIKAN (menghindari data leakage): HMM sebelumnya di-fit() pada
-    # SELURUH baris (termasuk periode yang nanti menjadi calibration/test
-    # set), sehingga parameter transisi & emisi ikut "melihat" pola
-    # return/volatilitas dari periode kalibrasi dan uji sebelum split
-    # dilakukan. Ini bisa membuat kualitas label regime (fitur ke-16,
-    # regime_labeled) pada test set terlihat lebih baik dari yang
-    # seharusnya, dan berpotensi bias jawaban RQ2 (kontribusi regime
-    # detection terhadap kualitas interval). Perbaikannya: fit HMM HANYA
-    # pada porsi training kronologis (70% pertama), lalu decode seluruh
-    # seri (train+calib+test) memakai parameter yang SAMA (Viterbi
-    # decoding via hmm.predict(), bukan fit ulang) — proporsi 70% ini
-    # harus konsisten dengan split train/calib/test di bawah.
     df_hmm = df.dropna(subset=["log_return","volatility_14d"]).copy()
     X_hmm  = df_hmm[["log_return","volatility_14d"]].values
     hmm_train_end = int(len(df_hmm) * 0.70)
@@ -811,16 +777,6 @@ def build_features_and_predict():
     df = df.join(df_hmm[["regime_labeled"]], how="left")
     df["target_return"] = df["log_return"].shift(-1)
 
-    # PERBAIKAN (bug off-by-one tanggal prediksi): dropna() di bawah ini
-    # SEBELUMNYA langsung diterapkan ke df setelah target_return dibuat.
-    # Karena target_return baris paling akhir (tanggal harga terbaru)
-    # selalu NaN (belum ada harga besok untuk dihitung log-return-nya),
-    # dropna() ikut membuang baris tanggal terbaru itu — akibatnya
-    # "prediksi besok" dan metrik "Harga Terakhir" di dashboard diam-diam
-    # mengacu ke H-1, bukan tanggal harga paling baru seperti yang
-    # dirancang pada subbab 3.3.2 (Perancangan Alur Data/Pipeline).
-    # Perbaikan: simpan baris terakhir (fitur lengkap, tanpa perlu
-    # target_return) sebelum dropna, khusus untuk prediksi live.
     last_row_live = df.iloc[[-1]].copy()
     df = df.dropna()
 
@@ -853,10 +809,6 @@ def build_features_and_predict():
     q_level     = min(np.ceil((1-ALPHA)*(len(scores)+1))/len(scores), 1.0)
     conf_margin = np.quantile(scores, q_level)
 
-    # Prediksi untuk besok (pakai last_row_live, bukan df.iloc[[-1]], agar
-    # benar-benar mengacu ke tanggal harga TERBARU — lihat catatan
-    # perbaikan off-by-one di atas — bukan ke tanggal terakhir on-chain
-    # ATAU ke H-1 akibat dropna() pada target_return)
     last_row    = last_row_live[FCOLS].values
     last_close  = float(last_row_live["close"].iloc[0])
     last_date   = last_row_live.index[0]
@@ -873,7 +825,6 @@ def build_features_and_predict():
     pred_hi  = last_close * np.exp(hi_r)
     pred_date = last_date + timedelta(days=1)
 
-    # Prediksi historis untuk chart (seluruh test set)
     df_test  = df.iloc[calib_end:]
     X_test   = df_test[FCOLS].values
     hist_lo  = df_test["close"].values * np.exp(mlo.predict(X_test)  - conf_margin)
@@ -921,10 +872,6 @@ with topbar_col:
     </div>
     """, unsafe_allow_html=True)
 with refresh_col:
-    # Tombol refresh manual: memaksa bypass cache (ttl=3600) tanpa perlu
-    # menunggu 1 jam. Berguna terutama saat candle harian BTC-USD di
-    # Yahoo Finance baru saja final (lihat catatan di kepala berkas soal
-    # delay basis hari US Eastern vs WIB).
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     if st.button("Refresh Data", use_container_width=True,
                  help="Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"):
@@ -947,12 +894,6 @@ with st.spinner("Memuat data dan menjalankan model..."):
         st.error(f"Gagal memuat data: {e}")
         st.stop()
 
-# --- Status kesegaran data HARGA (baru) + on-chain + panel info ---
-# Kesegaran harga dihitung dari selisih tanggal Close terakhir (last_date,
-# hasil fetch_price()) terhadap tanggal hari ini. Selisih >1 hari berarti
-# candle harian BTC-USD terbaru dari Yahoo Finance belum final/ter-publish
-# (biasa terjadi karena basis hari Yahoo untuk crypto condong ke US
-# Eastern, jauh di belakang WIB) — BUKAN berarti dashboard/model rusak.
 price_last_date   = result["last_date"]
 price_staleness_days = (pd.Timestamp(datetime.now().date()) - pd.Timestamp(price_last_date.date())).days
 is_price_fresh = price_staleness_days <= 1
@@ -1016,7 +957,6 @@ with tab_pred:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Peringatan transparansi jika HARGA belum up-to-date (baru) ---
     if not is_price_fresh:
         st.markdown(f"""
         <div class='warn-box'>
@@ -1033,7 +973,6 @@ with tab_pred:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- Peringatan transparansi jika on-chain tidak live ---
     if not is_onchain_fresh:
         st.markdown(f"""
         <div class='warn-box'>
@@ -1056,7 +995,6 @@ with tab_pred:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- Baris metrik atas ---
     last_close  = result["last_close"]
     last_date   = result["last_date"]
     pred_med    = result["pred_med"]
@@ -1088,7 +1026,6 @@ with tab_pred:
     st.markdown("<div class='section-label'>Grafik Prediksi vs Harga Aktual (Test Set)</div>",
                 unsafe_allow_html=True)
 
-    # --- Chart prediksi historis ---
     dates_test = result["df_test"].index
     hist_true  = result["hist_true"]
     hist_med   = result["hist_med"]
@@ -1117,7 +1054,6 @@ with tab_pred:
         mode="lines", name="Prediksi Median",
         line=dict(color=TEAL, width=1.5, dash="dash")
     ))
-    # Titik prediksi besok
     fig.add_trace(go.Scatter(
         x=[pred_date], y=[pred_med],
         mode="markers", name=f"Prediksi {pred_date.strftime('%d %b')}",
@@ -1143,7 +1079,6 @@ with tab_pred:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- Detail prediksi & sentimen ---
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("<div class='section-label'>Detail Prediksi Besok</div>",
@@ -1231,13 +1166,6 @@ with tab_comp:
     </div>
     """, unsafe_allow_html=True)
 
-    # Data hasil evaluasi FINAL (test set n=387, 27 Apr 2025 - 18 Mei 2026,
-    # RUN_DATE_LOCK=2026-05-20). Angka ini berasal dari notebook eksperimen
-    # Google Colab (Step 1-16) yang dijalankan TERPISAH dari dashboard ini
-    # -- lihat "CATATAN CAKUPAN MODEL" di kepala berkas. Kolom "Sumber"
-    # menandai bahwa hanya Model Usulan yang dihitung ulang secara live
-    # setiap dashboard dibuka; lima model pembanding di bawah adalah
-    # referensi statis dan TIDAK dilatih ulang di sini.
     results_data = [
         {"No":1, "Model":"XGBoost",      "Peran":"Gradient boosting",
          "Sumber":"Notebook (offline)",
@@ -1281,7 +1209,6 @@ with tab_comp:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Tabel ---
     st.markdown("<div class='section-label'>Tabel 4.1 — Hasil Evaluasi Model</div>",
                 unsafe_allow_html=True)
 
@@ -1305,7 +1232,6 @@ with tab_comp:
                  "R2","DirAcc","Coverage","AvgWidth"]]
     )
 
-    # --- Ringkasan uji signifikansi & ablation study (RQ2) ---
     with st.expander("Uji Signifikansi Statistik (paired bootstrap, N=5000, CI 95%)"):
         st.markdown("""
         Selisih MAE antar-model diuji signifikansinya karena ukuran test set
@@ -1369,12 +1295,11 @@ with tab_comp:
         keparahan bertahap berdasarkan lama staleness.
         """)
 
-    # --- Chart MAE ---
     st.markdown("<div class='section-label'>Visualisasi Metrik</div>",
                 unsafe_allow_html=True)
     tab1, tab2, tab3 = st.tabs(["MAE & MAPE", "R² & DirAcc", "Probabilistik"])
 
-    bar_colors = ["#c7c7cc"]*5 + [ACCENT]   # abu netral utk 5 model pembanding, aksen jingga hanya utk Model Usulan
+    bar_colors = ["#c7c7cc"]*5 + [ACCENT]
 
     with tab1:
         col1, col2 = st.columns(2)
@@ -1499,7 +1424,6 @@ with tab_data:
     </div>
     """, unsafe_allow_html=True)
 
-    # Rentang waktu
     col_r1, col_r2 = st.columns([3, 1])
     with col_r2:
         period = st.selectbox("Periode", ["6 Bulan","1 Tahun","2 Tahun","Semua"], index=1)
@@ -1509,7 +1433,6 @@ with tab_data:
     cutoff     = df_full.index[-1] - timedelta(days=days)
     df_view    = df_full[df_full.index >= cutoff].copy()
 
-    # --- Chart 1: Harga + Regime ---
     st.markdown("<div class='section-label'>Harga & Regime Pasar (HMM)</div>",
                 unsafe_allow_html=True)
 
@@ -1525,7 +1448,6 @@ with tab_data:
                    line=dict(color=TEXT, width=1.5)),
         row=1, col=1
     )
-    # Warnai background per regime
     for regime_id, color in regime_colors.items():
         mask = df_view["regime_labeled"] == regime_id
         segments = df_view[mask]
@@ -1552,7 +1474,6 @@ with tab_data:
     )
     st.plotly_chart(fig_price, use_container_width=True)
 
-    # --- Chart 2: Sentimen + Netflow ---
     col_s, col_n = st.columns(2)
 
     with col_s:
@@ -1603,15 +1524,6 @@ with tab_data:
         ))
         fig_nf.add_hline(y=0, line_dash="dash", line_color=TEXT_MUTE)
         if not is_onchain_fresh and result["onchain_last_real_date"] >= cutoff:
-            # NOTE: add_vline(..., annotation_text=...) pada sumbu-x bertipe
-            # datetime bisa memicu TypeError ("unsupported operand type(s)
-            # for +: 'int' and 'datetime.datetime'") di beberapa versi Plotly,
-            # karena internalnya menghitung rata-rata (mean) posisi anotasi
-            # dengan mencampur tipe int dan datetime. Konversi ke
-            # to_pydatetime() saja tidak selalu cukup untuk menghindarinya.
-            # Solusi yang lebih aman: gambar garis vertikal via add_shape()
-            # dan label via add_annotation() secara terpisah, tanpa memakai
-            # jalur otomatis add_vline() sama sekali.
             last_real_dt = result["onchain_last_real_date"].to_pydatetime()
             fig_nf.add_shape(
                 type="line", xref="x", yref="paper",
@@ -1633,7 +1545,6 @@ with tab_data:
         )
         st.plotly_chart(fig_nf, use_container_width=True)
 
-    # --- Chart 3: Netflow Terbobot Sentimen (fitur usulan) ---
     st.markdown("<div class='section-label'>Fitur Usulan — Sentiment-Weighted Netflow</div>",
                 unsafe_allow_html=True)
     nfw_view = df_view.dropna(subset=["netflow_weighted"])

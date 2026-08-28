@@ -1260,7 +1260,7 @@ with tab_comp:
          "MAE":1461, "RMSE":1990, "MAPE":1.59, "R2":0.9874, "DirAcc":50.7,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":6, "Model":"Model Usulan", "Peran":"HMM + XGB Quantile + Conformal",
-         "Sumber":"Live (dashboard ini)",
+         "Sumber":"Notebook (offline)",
          "MAE":1467, "RMSE":2003, "MAPE":1.59, "R2":0.9868, "DirAcc":53.7,
          "Coverage":91.2, "AvgWidth":7245, "PinballLo":247.4, "PinballHi":235.2},
     ]
@@ -1306,7 +1306,7 @@ with tab_comp:
     )
 
     # --- Ringkasan uji signifikansi & ablation study (RQ2) ---
-    with st.expander("📌 Uji Signifikansi Statistik (paired bootstrap, N=5000, CI 95%)"):
+    with st.expander("Uji Signifikansi Statistik (paired bootstrap, N=5000, CI 95%)"):
         st.markdown("""
         Selisih MAE antar-model diuji signifikansinya karena ukuran test set
         (387 baris) rentan terhadap noise. Perbandingan **Model Usulan vs.
@@ -1329,7 +1329,7 @@ with tab_comp:
         maupun LSTM.
         """)
 
-    with st.expander("📌 Ablation Study — Kontribusi Regime HMM & Sentiment-Weighted Netflow (RQ2)"):
+    with st.expander("Ablation Study (Kontribusi Regime HMM & Sentiment-Weighted Netflow"):
         st.markdown("""
         Dua varian model diuji terhadap Model Usulan FULL, dengan split dan
         hyperparameter identik:
@@ -1348,7 +1348,7 @@ with tab_comp:
         indikator kondisi pasar (lihat halaman "Analisis Data").
         """)
 
-    with st.expander("📌 Validasi Kuantitatif Strategi Forward-Fill (Step 14–16)"):
+    with st.expander("Validasi Kuantitatif Strategi Forward-Fill (Step 14–16)"):
         st.markdown("""
         Untuk menguji apakah forward-fill data on-chain (dipakai saat sumber
         gratis tertinggal, lihat peringatan di halaman "Prediksi") aman

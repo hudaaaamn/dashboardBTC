@@ -702,8 +702,30 @@ html, body, .stApp, .main, .block-container {{
     [data-testid="stMetricValue"] {{ font-size:20px !important; }}
     [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
     [data-testid="stHorizontalBlock"] > div {{ min-width: 46% !important; }}
-    .stTabs [data-baseweb="tab"] {{ padding:0 12px; font-size:12.5px; }}
     .block-container {{ padding-left:0.9rem; padding-right:0.9rem; }}
+
+    /* ---- Tab navigasi (Prediksi / Komparasi Model / Analisis Data) di mobile ----
+       Default-nya tab-list ini selebar isinya (width:fit-content) dan
+       tab-nya berjajar dalam satu baris tanpa boleh membungkus
+       (flex-wrap bawaan BaseWeb: nowrap). Di layar sempit, 3 tab tidak
+       muat dalam satu baris -- sebelumnya ini masih bisa discroll ke
+       samping, tapi sejak block-container dikunci overflow-x:hidden
+       (utk mencegah bug scroll horizontal bocor antar-tab), tab paling
+       kanan ("Analisis Data") jadi ke-CLIP/terpotong alih-alih bisa
+       discroll. Perbaikan: izinkan tab-list membungkus ke baris baru
+       (flex-wrap:wrap) dan lebar penuh, dengan tiap tab diberi
+       flex-basis ~48% -- hasilnya 2 tab pertama otomatis sejajar di
+       baris atas, tab ke-3 "turun" sendiri ke baris kedua secara utuh
+       (bukan terpotong), persis seperti pola 2+1 yang diinginkan. */
+    .stTabs [data-baseweb="tab-list"] {{
+        flex-wrap: wrap !important;
+        width: 100% !important;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        flex: 1 1 48%;
+        padding:0 10px; font-size:12.5px;
+        justify-content:center;
+    }}
 
     /* ---- Spasi bawah khusus tab TERAKHIR ("Analisis Data") di mobile ----
        Halaman ini ditutup oleh chart+info-box tanpa jarak tambahan ke

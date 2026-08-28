@@ -627,27 +627,49 @@ div[data-baseweb="menu"] li[aria-selected="true"] {{
     color: {TEXT} !important;
 }}
 
+/* ---- Cegah scroll horizontal level HALAMAN (body/app) bocor akibat
+   tabel lebar ----
+   Tabel "Tabel 4.1" (di tab Komparasi Model) sengaja punya min-width
+   besar (880px) supaya isinya tidak dempet di layar sempit, dan sudah
+   dibungkus .table-wrap dengan overflow-x:auto miliknya sendiri. Tanpa
+   baris ini, sebagian browser mobile tetap mengizinkan tabel lebar itu
+   memperlebar body/halaman secara keseluruhan (bukan cuma di dalam
+   .table-wrap), sehingga muncul scroll horizontal di level HALAMAN.
+   Karena panel-panel st.tabs() sama-sama tetap berada di satu halaman
+   (cuma disembunyikan/ditampilkan), posisi scroll horizontal itu ikut
+   terbawa saat pindah ke tab lain (mis. "Analisis Data"), membuat
+   kontennya tampak geser/terpotong di kiri layar padahal isi tab
+   tersebut sendiri tidak lebar. Baris ini mengunci body/app supaya
+   TIDAK bisa scroll horizontal secara keseluruhan -- elemen yang
+   memang perlu discroll (.table-wrap, tabel markdown) tetap bisa
+   discroll secara lokal lewat overflow-x:auto miliknya sendiri. */
+html, body, .stApp, .main, .block-container {{
+    overflow-x: hidden !important;
+    max-width: 100vw;
+}}
+
 /* ---- Tabel markdown pipe-syntax (mis. di dalam expander "Uji
    Signifikansi Statistik", "Ablation Study") ----
    Tabel-tabel ini ditulis lewat sintaks markdown biasa (| kolom |...|),
    BUKAN lewat helper render_table() yang sudah punya wrapper
-   overflow-x:auto (lihat .table-wrap). Tanpa wrapper, di layar sempit
-   (mobile) kolom paling kanan (mis. "Kesimpulan") terpotong/clip alih-
-   alih bisa di-scroll. Perbaikan: bungkus SEMUA <table> hasil render
-   markdown Streamlit (di mana pun munculnya -- termasuk dalam expander)
-   dengan container yang bisa discroll horizontal, tanpa mengubah isi
-   tabelnya sama sekali. */
-[data-testid="stMarkdownContainer"] table {{
-    display: block !important;
-    width: 100% !important;
+   overflow-x:auto (lihat .table-wrap). PERBAIKAN (revisi ke-2): versi
+   sebelumnya membuat <table> jadi display:block sementara <thead> dan
+   <tbody> masing-masing jadi display:table TERPISAH -- akibatnya header
+   dan body menghitung lebar kolom sendiri-sendiri secara independen,
+   sehingga kolom header tidak sejajar dengan kolom isinya (terlihat
+   "berantakan" di mobile). Perbaikan: <table> TETAP satu kesatuan
+   (table-layout normal, header & body otomatis sejajar karena memang
+   satu elemen <table> yang sama) -- yang diberi overflow-x:auto adalah
+   CONTAINER pembungkusnya ([data-testid="stMarkdownContainer"]), bukan
+   tabelnya sendiri. Dengan begitu seluruh tabel discroll sebagai satu
+   blok utuh, kolom header & body selalu sejajar di posisi scroll manapun. */
+[data-testid="stMarkdownContainer"]:has(table) {{
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch;
-    border-collapse: collapse;
 }}
-[data-testid="stMarkdownContainer"] table thead,
-[data-testid="stMarkdownContainer"] table tbody {{
-    display: table;
-    width: 100%;
+[data-testid="stMarkdownContainer"] table {{
+    border-collapse: collapse;
+    min-width: 520px;
 }}
 [data-testid="stMarkdownContainer"] table th,
 [data-testid="stMarkdownContainer"] table td {{
@@ -682,6 +704,17 @@ div[data-baseweb="menu"] li[aria-selected="true"] {{
     [data-testid="stHorizontalBlock"] > div {{ min-width: 46% !important; }}
     .stTabs [data-baseweb="tab"] {{ padding:0 12px; font-size:12.5px; }}
     .block-container {{ padding-left:0.9rem; padding-right:0.9rem; }}
+
+    /* ---- Spasi bawah khusus tab TERAKHIR ("Analisis Data") di mobile ----
+       Halaman ini ditutup oleh chart+info-box tanpa jarak tambahan ke
+       tepi layar, sehingga di mobile terasa "mepet"/terpotong dekat
+       navigasi browser. Ditarget lewat urutan panel tab ke-3 (Prediksi=1,
+       Komparasi Model=2, Analisis Data=3) -- HANYA berlaku di mobile,
+       supaya tampilan desktop (yang sudah cukup lega lewat
+       .block-container padding-bottom:3rem) tidak berubah. */
+    [data-baseweb="tab-panel"]:nth-of-type(3) {{
+        padding-bottom: 56px;
+    }}
 }}
 @media (max-width: 560px) {{
     [data-testid="stHorizontalBlock"] > div {{ min-width: 100% !important; }}

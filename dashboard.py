@@ -1069,7 +1069,7 @@ if not st.session_state.dashboard_started:
         </div>
         <div style='color:{TEXT_DIM}; font-size:13.5px; max-width:480px; margin:0 auto;'>
             Klik <b>Tombol Muat & Jalankan Model</b> untuk mengambil data harga, sentimen, 
-            dan on-chain terbaru, lalu menjalankan modelprediksi probabilistik Bitcoin.
+            dan on-chain terbaru, lalu menjalankan model prediksi probabilistik Bitcoin.
         </div>
     </div>
     <div class='disclaimer-box'>

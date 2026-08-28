@@ -589,6 +589,76 @@ table.apple-table tbody td {{
 table.apple-table tbody tr:last-child td {{ border-bottom:none; }}
 table.apple-table tbody tr:hover {{ background:{BG}; }}
 
+/* ---- Selectbox (mis. "Periode" di halaman Analisis Data) ----
+   Sama seperti kasus tombol Refresh sebelumnya: kontrol native BaseWeb
+   ini ambil warna dari tema internal Streamlit/browser (bisa auto-dark
+   di mobile), bukan dari CSS kustom halaman ini. Kotak select (state
+   tertutup) DAN daftar pilihan (state terbuka, dirender di portal
+   terpisah lewat data-baseweb="popover"/"menu") sama-sama di-override
+   supaya konsisten terang mengikuti desain apple.com di seluruh halaman. */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 12px !important;
+    color: {TEXT} !important;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] * {{
+    color: {TEXT} !important;
+    -webkit-text-fill-color: {TEXT} !important;
+    fill: {TEXT_DIM} !important;
+}}
+div[data-baseweb="popover"] ul[role="listbox"],
+div[data-baseweb="menu"] {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10) !important;
+}}
+div[data-baseweb="popover"] ul[role="listbox"] li,
+div[data-baseweb="menu"] li {{
+    background: {SURFACE} !important;
+    color: {TEXT} !important;
+}}
+div[data-baseweb="popover"] ul[role="listbox"] li:hover,
+div[data-baseweb="menu"] li:hover,
+div[data-baseweb="popover"] ul[role="listbox"] li[aria-selected="true"],
+div[data-baseweb="menu"] li[aria-selected="true"] {{
+    background: {SURFACE_2} !important;
+    color: {TEXT} !important;
+}}
+
+/* ---- Tabel markdown pipe-syntax (mis. di dalam expander "Uji
+   Signifikansi Statistik", "Ablation Study") ----
+   Tabel-tabel ini ditulis lewat sintaks markdown biasa (| kolom |...|),
+   BUKAN lewat helper render_table() yang sudah punya wrapper
+   overflow-x:auto (lihat .table-wrap). Tanpa wrapper, di layar sempit
+   (mobile) kolom paling kanan (mis. "Kesimpulan") terpotong/clip alih-
+   alih bisa di-scroll. Perbaikan: bungkus SEMUA <table> hasil render
+   markdown Streamlit (di mana pun munculnya -- termasuk dalam expander)
+   dengan container yang bisa discroll horizontal, tanpa mengubah isi
+   tabelnya sama sekali. */
+[data-testid="stMarkdownContainer"] table {{
+    display: block !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    border-collapse: collapse;
+}}
+[data-testid="stMarkdownContainer"] table thead,
+[data-testid="stMarkdownContainer"] table tbody {{
+    display: table;
+    width: 100%;
+}}
+[data-testid="stMarkdownContainer"] table th,
+[data-testid="stMarkdownContainer"] table td {{
+    white-space: nowrap;
+    padding: 8px 12px;
+    border-bottom: 1px solid {BORDER};
+}}
+[data-testid="stMarkdownContainer"] table th {{
+    background: {SURFACE_2}; color: {TEXT_DIM}; text-align:left;
+}}
+
 /* ---- Jarak antar-kartu supaya tidak "nempel" ---- */
 .warn-box, .info-box, .disclaimer-box {{ margin-bottom:20px; }}
 

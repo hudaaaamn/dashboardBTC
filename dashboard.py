@@ -1,81 +1,5 @@
 # ============================================================
 # dashboard.py — Dashboard Prediksi Probabilistik Harga Bitcoin
-# TA: Huda Muhammad Nur — UGM Sekolah Vokasi 2026
-#
-# Cara menjalankan:
-#   pip install streamlit plotly yfinance xgboost hmmlearn requests
-#   streamlit run dashboard.py
-#
-# CATATAN REVISI (Opsi B — on-chain fallback):
-#   Sumber on-chain gratis (CoinMetrics Community CSV di GitHub) berhenti
-#   diperbarui sejak CoinMetrics merestrukturisasi tier Community Data-nya
-#   (~Mei 2026, lihat BAB I & Batasan Penelitian subbab 1.4). Dashboard ini
-#   tetap bisa menghasilkan prediksi "hari ini
-#   untuk besok" karena timeline utama sekarang mengikuti data HARGA
-#   (selalu paling baru), sementara fitur on-chain di-forward-fill dari
-#   nilai riil terakhir yang tersedia dan diberi badge transparansi.
-#   Begitu API key premium (mis. CoinMetrics Pro) tersedia, isi
-#   COINMETRICS_API_KEY di st.secrets / environment variable — fungsi
-#   fetch_onchain() otomatis beralih ke jalur live tanpa perlu ubah kode lain.
-#
-# CATATAN CAKUPAN MODEL (hanya Model Usulan yang berjalan live di sini):
-#   Dashboard ini HANYA melatih/menjalankan satu model secara live, yaitu
-#   Model Usulan (HMM Regime-Switching + XGBoost Quantile + Conformal
-#   Prediction) melalui build_features_and_predict() di bawah. Kelima
-#   model pembanding (XGBoost, LightGBM, Random Forest, SVR, LSTM) TIDAK
-#   dilatih ulang di dalam dashboard — angkanya (results_data pada halaman
-#   "Komparasi Model") adalah hasil statis dari eksperimen komparasi yang
-#   dijalankan terpisah di notebook Google Colab (Step 1-16), pada test
-#   set n=387 (27 Apr 2025 - 18 Mei 2026, RUN_DATE_LOCK=2026-05-20), lalu
-#   di-hardcode di sini sebagai referensi. Keputusan desain ini disengaja:
-#   (1) melatih 5 model tambahan (termasuk LSTM) pada setiap kunjungan
-#   akan membuat waktu muat dashboard jauh lebih lambat, (2) angka
-#   komparasi perlu tetap pada kondisi data on-chain "bersih" (belum
-#   forward-fill) seperti saat eksperimen skripsi dijalankan, sehingga
-#   tidak relevan untuk dihitung ulang dengan data live yang mungkin
-#   sudah forward-fill. Jika notebook eksperimen dijalankan ulang dengan
-#   data baru, angka pada results_data perlu diperbarui manual mengikuti
-#   hasil notebook tsb (lihat Tabel 4.1/4.2/4.3 BAB IV).
-#
-# CATATAN REDESIGN TAMPILAN (2026):
-#   Berkas ini adalah hasil redesign UI dari versi sebelumnya. Sesuai PRD
-#   redesign, TIDAK ADA perubahan pada logika backend, sumber data, alur
-#   perhitungan, caching, atau nama/fungsi Python. Perubahan murni pada
-#   lapisan tampilan: skema warna & tipografi baru, navigasi sidebar
-#   diganti tab horizontal di bagian atas, layout dibuat responsif untuk
-#   tablet/mobile, dan komponen visual (kartu, badge, expander) dirancang
-#   ulang. Semua informasi & angka yang wajib tampil menurut PRD tetap ada.
-#
-# CATATAN TAMBAHAN (Agustus 2026 — kesegaran data HARGA):
-#   Ditambahkan badge kesegaran harga (mirip badge on-chain yang sudah
-#   ada) + tombol "Refresh Data" manual. Ini merespons kasus nyata: harga
-#   BTC-USD dari Yahoo Finance (via yfinance) kadang tampak "telat 1 hari"
-#   ketika dashboard dibuka pagi/siang WIB, karena candle harian crypto di
-#   Yahoo Finance sering final berdasarkan hari kalender US Eastern (jauh
-#   di belakang WIB/UTC+7), ditambah cache Streamlit (ttl=3600) yang baru
-#   dicek ulang saat ada kunjungan baru. Badge ini TIDAK mengubah logika
-#   pipeline/model sama sekali — murni lapisan transparansi + tombol untuk
-#   memaksa bypass cache tanpa menunggu ttl habis sendiri.
-#
-# CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka):
-#   Sebelumnya, setiap kali dashboard DIBUKA (termasuk kunjungan pertama
-#   seorang user), seluruh pipeline (fetch harga/sentimen/on-chain +
-#   build_features_and_predict) langsung berjalan otomatis. Ini membuat
-#   pengunjung pertama selalu menunggu proses training/prediksi walau
-#   mereka belum tentu butuh data ter-refresh saat itu juga.
-#   Revisi: dipakai st.session_state sebagai flag ("dashboard_started").
-#   Saat halaman pertama kali dibuka, HANYA topbar + tombol yang tampil
-#   (belum ada fetch/model apa pun yang dijalankan) — user melihat
-#   halaman kosong berisi ajakan menekan tombol. Pipeline (fetch_price,
-#   fetch_sentiment, fetch_onchain, build_features_and_predict, serta
-#   seluruh tab Prediksi/Komparasi Model/Analisis Data) baru dieksekusi
-#   setelah tombol "Muat & Jalankan Model" / "Refresh Data" ditekan.
-#   Tombol yang sama juga dipakai untuk me-refresh ulang (bypass cache
-#   1 jam) setelah dashboard pernah dijalankan sebelumnya di sesi ini.
-#   Tidak ada perubahan pada logika fetch/model/caching itu sendiri —
-#   perubahan murni pada KAPAN pipeline tsb dipanggil.
-# ============================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -102,57 +26,28 @@ st.set_page_config(
 
 # ============================================================
 # DESIGN TOKENS
-# ------------------------------------------------------------
-# Redesign kedua: acuan visual adalah apple.com — terang, lega, hairline
-# tipis pengganti border tebal, bayangan sangat halus pengganti outline,
-# satu aksen warna yang dipakai hemat. Warna dasar & teks memakai palet
-# neutral khas Apple (page #f5f5f7, teks #1d1d1f/#6e6e73/#86868b, hairline
-# #d2d2d7). Jingga Bitcoin dipertahankan sebagai SATU-SATUNYA aksen produk
-# (bukan biru generik Apple) supaya identitas "BTC Dashboard" tetap ada —
-# dipakai hemat, persis prinsip restraint Apple: satu warna berani, sisanya
-# netral. Teal dipertahankan sebagai aksen sekunder khusus utk prediksi.
-# Tipografi: system font stack (San Francisco di Apple devices, fallback
-# Inter di platform lain) untuk seluruh teks — termasuk figur numerik,
-# memakai tabular-nums alih-alih font monospace terpisah, supaya angka
-# tetap rapi sejajar tanpa terasa "template terminal".
 # ============================================================
-BG        = "#f5f5f7"   # page background khas Apple
-SURFACE   = "#ffffff"   # kartu/panel
-SURFACE_2 = "#f2f2f4"   # elemen sekunder di dalam kartu (bar non-highlight, dll)
-BORDER    = "#d2d2d7"   # hairline khas Apple
-TEXT      = "#1d1d1f"   # teks utama, hitam pekat khas Apple
-TEXT_DIM  = "#6e6e73"   # teks sekunder
-TEXT_MUTE = "#86868b"   # teks tersier/caption
-ACCENT    = "#e8830f"   # jingga Bitcoin, digelapkan sedikit agar kontras aman di atas putih
+BG        = "#f5f5f7"   
+SURFACE   = "#ffffff"   
+SURFACE_2 = "#f2f2f4"  
+BORDER    = "#d2d2d7"   
+TEXT      = "#1d1d1f"  
+TEXT_DIM  = "#6e6e73"  
+TEXT_MUTE = "#86868b"  
+ACCENT    = "#e8830f"   
 ACCENT_SOFT = "rgba(232,131,15,0.10)"
-TEAL      = "#0f9488"   # aksen sekunder (digelapkan dari versi neon agar terbaca di atas putih) — prediksi / model usulan
+TEAL      = "#0f9488"  
 TEAL_SOFT = "rgba(15,148,136,0.10)"
-GREEN     = "#1e8e3e"   # bull / positif — digelapkan agar teks tetap terbaca di atas putih
-RED       = "#d5372b"   # bear / negatif — idem
-AMBER     = "#b1740f"   # peringatan (teks); versi cerah dipakai khusus utk elemen non-teks
+GREEN     = "#1e8e3e"   
+RED       = "#d5372b"   
+AMBER     = "#b1740f"  
 GRID      = "#e5e5ea"
 
 REGIME_COLORS = {0: RED, 1: TEXT_MUTE, 2: GREEN}
 REGIME_NAMES  = {0: "Bear", 1: "Sideways", 2: "Bull"}
 
 # ============================================================
-# IKON KUSTOM (pengganti emoji 📈📊🔍ℹ️⚠️)
-# ------------------------------------------------------------
-# Emoji bawaan platform (📈📊🔍ℹ️⚠️) dirender oleh OS/browser sendiri —
-# gaya, warna, dan proporsinya beda-beda antar perangkat, dan sering
-# terkesan generik/"AI slop" karena bukan bagian dari sistem desain
-# halaman ini. Sebagai gantinya dipakai ikon garis custom gaya
-# SF Symbols/Lucide (stroke tunggal, ujung membulat, tanpa gradient/fill
-# glossy), digambar sebagai SVG lalu di-encode jadi data-URI.
-#
-# Untuk ikon pada st.tabs()/st.expander() (dua widget native Streamlit
-# yang labelnya cuma menerima teks polos, tidak menerima HTML), ikon
-# disuntik lewat CSS `mask-image` pada pseudo-element ::before — dengan
-# `background-color: currentColor` warnanya otomatis ikut warna teks tab
-# (redup saat idle, gelap saat aktif) tanpa perlu aset terpisah per state.
-# Untuk ikon di dalam blok HTML kustom (warn-box/disclaimer-box) yang
-# memang sudah lewat st.markdown(unsafe_allow_html=True), ikon ditulis
-# langsung sebagai inline SVG (WARN_ICON) karena warnanya tetap (merah).
+# IKON KUSTOM
 # ============================================================
 def _icon_svg(paths: str) -> str:
     svg = (
@@ -162,27 +57,26 @@ def _icon_svg(paths: str) -> str:
     )
     return "data:image/svg+xml," + urllib.parse.quote(svg)
 
-# Tab "Prediksi" — garis tren naik (gaya ikon "trending-up")
+# Tab "Prediksi"
 ICON_TREND  = _icon_svg(
     '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>'
     '<polyline points="17 6 23 6 23 12"/>'
 )
-# Tab "Komparasi Model" — batang perbandingan (gaya ikon "bar-chart")
+# Tab "Komparasi Model"
 ICON_BARS   = _icon_svg(
     '<path d="M3 3v18h18"/><path d="M18 17V9"/>'
     '<path d="M13 17V5"/><path d="M8 17v-3"/>'
 )
-# Tab "Analisis Data" — kaca pembesar (gaya ikon "search")
+# Tab "Analisis Data" 
 ICON_SEARCH = _icon_svg(
     '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'
 )
-# Expander "Tentang dashboard" — huruf i dalam lingkaran (gaya ikon "info")
+# Expander "Tentang dashboard"
 ICON_INFO   = _icon_svg(
     '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
 )
 
-# Ikon peringatan/disclaimer — lingkaran merah + tanda seru, dipakai
-# langsung sebagai inline SVG (bukan mask) di dalam blok HTML kustom.
+# Ikon peringatan/disclaimer
 WARN_ICON = (
     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
     'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;'
@@ -194,15 +88,6 @@ WARN_ICON = (
 
 # ============================================================
 # CUSTOM CSS
-# ------------------------------------------------------------
-# Bahasa visual: apple.com. Tidak ada gradient dekoratif, tidak ada
-# border tebal berwarna — kartu dibedakan dari latar lewat bayangan
-# sangat halus + hairline 1px senada latar, radius besar (18–20px),
-# dan banyak ruang kosong. Satu aksen (jingga Bitcoin) dipakai hemat;
-# elemen lain netral. Font: system stack (San Francisco di perangkat
-# Apple, Inter di platform lain) untuk semua teks termasuk angka —
-# angka memakai font-variant-numeric: tabular-nums supaya tetap rapi
-# sejajar tanpa perlu font monospace terpisah.
 # ============================================================
 st.markdown(f"""
 <style>
@@ -764,13 +649,6 @@ html, body, .stApp, .main, .block-container {{
 
 # ============================================================
 # HELPER — render tabel sebagai HTML (bukan st.dataframe)
-# ------------------------------------------------------------
-# Alasan: st.dataframe dirender lewat komponen grid milik Streamlit yang
-# ikut tema internal Streamlit (bisa auto dark), bukan CSS kustom di file
-# ini. Untuk tabel yang murni ditampilkan (tanpa perlu sortir/scroll
-# interaktif ala grid), dipakai HTML table biasa yang 100% ikut styling
-# apple.com di atas — dijamin selalu terang di browser/perangkat manapun.
-# Ini murni cara MENAMPILKAN data yang sama, bukan mengubah datanya.
 # ============================================================
 def render_table(df: pd.DataFrame):
     html = df.to_html(index=False, escape=False, classes="apple-table", border=0)
@@ -795,7 +673,7 @@ def fetch_price(start="2021-01-01"):
     df = df.dropna()
 
     today_utc = pd.Timestamp(datetime.utcnow().date())
-    df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
+    df = df[df.index < today_utc]  
     return df
 
 @st.cache_data(ttl=3600)
@@ -863,9 +741,9 @@ def fetch_onchain(start="2021-01-01"):
                 if len(df.dropna()) > 0:
                     return df, True
         except Exception:
-            pass  # jatuh ke fallback gratis di bawah
+            pass 
 
-    # --- Fallback: CSV Community gratis (mungkin sudah berhenti update) ---
+    # --- Fallback CSV Community gratis 
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     r = requests.get(url, timeout=30)
     df = pd.read_csv(io.StringIO(r.text), low_memory=False)

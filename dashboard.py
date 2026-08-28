@@ -201,12 +201,12 @@ html, body, [class*="css"] {{
     color: {TEXT};
     -webkit-font-smoothing: antialiased;
 }}
-.stApp { background-color: {BG}; }
-[data-testid="stHeader"] { background: transparent; }
-h1, h2, h3, h4 { font-family: var(--font-sans); letter-spacing:-0.01em; }
-p, span, div, label { font-family: var(--font-sans); }
-code, .stMarkdown code { font-family: "SF Mono", "IBM Plex Mono", ui-monospace, monospace; font-size:0.92em; color: #ffffff; }
-.tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.stApp {{ background-color: {BG}; }}
+[data-testid="stHeader"] {{ background: transparent; }}
+h1, h2, h3, h4 {{ font-family: var(--font-sans); letter-spacing:-0.01em; }}
+p, span, div, label {{ font-family: var(--font-sans); }}
+code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace, monospace; font-size:0.92em; color: #ffffff;}}
+.tnum {{ font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
 
 /* Blok konten utama diberi lebar maksimum + padding lega, khas halaman produk Apple */
 .block-container {{ padding-top:1.4rem; padding-bottom:3rem; max-width:1180px; }}

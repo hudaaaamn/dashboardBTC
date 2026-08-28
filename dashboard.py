@@ -991,8 +991,8 @@ with st.expander("Tentang dashboard ini"):
     <b>Model yang berjalan live di dashboard ini:</b><br>
     HMM Regime-Switching + XGBoost Quantile + Conformal Prediction.
     <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-    Ini satu-satunya model yang dihitung ulang secara live. Lima model
-    pembanding pada halaman "Komparasi Model" adalah referensi statis
+    Ini satu-satunya model yang dihitung ulang secara live untuk halaman prediksi saja. Semua model, dari model
+    pembanding hingga usulan pada halaman "Komparasi Model" adalah referensi statis
     dari notebook eksperimen terpisah, bukan hasil live.
     </span>
     </div>
@@ -1043,8 +1043,7 @@ with tab_pred:
         ({onchain_stale_days} hari lalu). Fitur netflow pada prediksi ini
         menggunakan nilai historis terakhir yang tersedia (forward-fill),
         sehingga tidak mencerminkan aktivitas bursa terkini. Fitur harga dan
-        sentimen tetap diperbarui real-time. Lihat DAFTAR PUSTAKA/BAB III
-        (Batasan Penelitian) untuk penjelasan lebih lengkap.
+        sentimen tetap diperbarui real-time.
         <br><br>
         <span style='font-size:11px;color:{TEXT_DIM}'>
         <b style='color:{AMBER}'>Sudah divalidasi:</b> simulasi kuantitatif pada
@@ -1273,7 +1272,7 @@ with tab_comp:
     <b>test set n=387</b> (27 Apr 2025 &ndash; 18 Mei 2026), dijalankan pada
     notebook eksperimen Google Colab dengan tanggal data dikunci
     (<code>RUN_DATE_LOCK=2026-05-20</code>) agar hasil dapat direproduksi.
-    Kelima model pembanding (baris 1&ndash;5) merupakan <b>referensi statis</b>
+    Semua model (baris 1&ndash;6) merupakan <b>referensi statis</b>
     dari notebook tersebut dan tidak dilatih ulang setiap dashboard dibuka.
     Hanya <b>Model Usulan</b> (baris 6) yang dihitung ulang secara live oleh
     dashboard ini setiap kali data terbaru diambil &mdash; lihat halaman

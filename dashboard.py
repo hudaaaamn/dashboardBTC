@@ -492,16 +492,30 @@ div[class*="StatusWidget"] * {{
 
 /* ---- Tooltip bawaan Streamlit (dari parameter help= pada st.button) ----
    Default: kotak gelap solid + shadow + teks putih. Diganti jadi tanpa
-   background/shadow, teks hitam polos mengikuti warna teks halaman. */
-[data-testid="stTooltipContent"] {{
+   background/shadow, teks hitam polos mengikuti warna teks halaman.
+   Beberapa versi Streamlit merender tooltip ini lewat testid berbeda
+   (stTooltipContent) atau lewat komponen BaseWeb polos (popover/tooltip
+   dengan role="tooltip", tanpa testid sama sekali) -- semua kemungkinan
+   selector dipasang sekaligus, dengan !important ganda, supaya menang
+   dari CSS inline/emotion-cache bawaan komponen tsb di versi manapun. */
+[data-testid="stTooltipContent"],
+div[data-baseweb="tooltip"],
+div[data-baseweb="popover"] [role="tooltip"],
+[role="tooltip"] {{
+    background-color: transparent !important;
     background: transparent !important;
     box-shadow: none !important;
     border: none !important;
     color: {TEXT} !important;
 }}
-[data-testid="stTooltipContent"] * {{
+[data-testid="stTooltipContent"] *,
+div[data-baseweb="tooltip"] *,
+div[data-baseweb="popover"] [role="tooltip"] *,
+[role="tooltip"] * {{
+    background: transparent !important;
     color: {TEXT} !important;
     -webkit-text-fill-color: {TEXT} !important;
+    fill: {TEXT} !important;
 }}
 
 [data-testid="stExpander"] summary:focus,

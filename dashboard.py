@@ -56,6 +56,24 @@
 #   dicek ulang saat ada kunjungan baru. Badge ini TIDAK mengubah logika
 #   pipeline/model sama sekali — murni lapisan transparansi + tombol untuk
 #   memaksa bypass cache tanpa menunggu ttl habis sendiri.
+#
+# CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka):
+#   Sebelumnya, setiap kali dashboard DIBUKA (termasuk kunjungan pertama
+#   seorang user), seluruh pipeline (fetch harga/sentimen/on-chain +
+#   build_features_and_predict) langsung berjalan otomatis. Ini membuat
+#   pengunjung pertama selalu menunggu proses training/prediksi walau
+#   mereka belum tentu butuh data ter-refresh saat itu juga.
+#   Revisi: dipakai st.session_state sebagai flag ("dashboard_started").
+#   Saat halaman pertama kali dibuka, HANYA topbar + tombol yang tampil
+#   (belum ada fetch/model apa pun yang dijalankan) — user melihat
+#   halaman kosong berisi ajakan menekan tombol. Pipeline (fetch_price,
+#   fetch_sentiment, fetch_onchain, build_features_and_predict, serta
+#   seluruh tab Prediksi/Komparasi Model/Analisis Data) baru dieksekusi
+#   setelah tombol "Muat & Jalankan Model" / "Refresh Data" ditekan.
+#   Tombol yang sama juga dipakai untuk me-refresh ulang (bypass cache
+#   1 jam) setelah dashboard pernah dijalankan sebelumnya di sesi ini.
+#   Tidak ada perubahan pada logika fetch/model/caching itu sendiri —
+#   perubahan murni pada KAPAN pipeline tsb dipanggil.
 # ============================================================
 
 import streamlit as st
@@ -994,6 +1012,17 @@ def build_features_and_predict():
     }
 
 # ============================================================
+# STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
+# ------------------------------------------------------------
+# Lihat "CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka)"
+# di kepala berkas. Flag ini menentukan apakah kita berhenti setelah
+# menampilkan topbar saja (belum pernah dijalankan) atau lanjut memuat
+# data + menjalankan model (sudah/baru saja ditekan tombolnya).
+# ============================================================
+if "dashboard_started" not in st.session_state:
+    st.session_state.dashboard_started = False
+
+# ============================================================
 # TOPBAR — branding (bagian yang tidak butuh data dulu)
 # ============================================================
 topbar_col, refresh_col = st.columns([6, 1])
@@ -1012,10 +1041,46 @@ with topbar_col:
     """, unsafe_allow_html=True)
 with refresh_col:
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    if st.button("Refresh Data", use_container_width=True,
-                 help="Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"):
-        st.cache_data.clear()
+    if st.session_state.dashboard_started:
+        button_label = "Refresh Data"
+        button_help  = "Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"
+    else:
+        button_label = "Muat & Jalankan Model"
+        button_help  = "Ambil data harga/sentimen/on-chain lalu jalankan model prediksi"
+    if st.button(button_label, use_container_width=True, help=button_help):
+        if st.session_state.dashboard_started:
+            # Ini penekanan ke-2+ (refresh) -> paksa bypass cache 1 jam.
+            st.cache_data.clear()
+        st.session_state.dashboard_started = True
         st.rerun()
+
+# ============================================================
+# GATE — jika model/pipeline belum pernah dijalankan di sesi ini,
+# tampilkan hanya topbar + ajakan klik tombol, JANGAN fetch/predict
+# apa pun dulu (fetch_price/fetch_sentiment/fetch_onchain/
+# build_features_and_predict semuanya baru dipanggil setelah tombol
+# ditekan, lihat blok "LOAD DATA" di bawah st.stop() ini).
+# ============================================================
+if not st.session_state.dashboard_started:
+    st.markdown(f"""
+    <div class='info-box' style='text-align:center; padding:56px 24px; margin-top:24px;'>
+        <div style='font-size:15px; color:{TEXT}; font-weight:600; margin-bottom:6px;'>
+            Dashboard belum dijalankan
+        </div>
+        <div style='color:{TEXT_DIM}; font-size:13.5px; max-width:480px; margin:0 auto;'>
+            Klik <b>Muat & Jalankan Model</b> di kanan atas untuk mengambil data
+            harga, sentimen, dan on-chain terbaru, lalu menjalankan model
+            prediksi probabilistik Bitcoin.
+        </div>
+    </div>
+    <div class='disclaimer-box'>
+    {WARN_ICON}<b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
+    Tugas Akhir Program Studi Teknologi Rekayasa Perangkat Lunak, Universitas Gadjah Mada.
+    Prediksi yang ditampilkan <b>bukan merupakan nasihat investasi</b> dan tidak boleh
+    dijadikan dasar keputusan finansial.
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
 
 # ============================================================
 # LOAD DATA (dengan spinner)

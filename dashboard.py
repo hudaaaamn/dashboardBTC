@@ -981,7 +981,7 @@ with status_col2:
 
 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-with st.expander("Tentang dashboard ini — sumber data, model, & disclaimer"):
+with st.expander("Tentang dashboard ini"):
     st.markdown(f"""
     <div class='info-box' style='margin-top:0'>
     <b>Sumber data:</b><br>

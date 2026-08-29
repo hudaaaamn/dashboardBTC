@@ -1045,11 +1045,8 @@ with tab_pred:
         BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
         <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
         lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
-        tersebut, bukan hari ini. Ini biasanya terjadi karena Yahoo Finance
-        menutup candle harian instrumen crypto berdasarkan basis hari
-        <b>US Eastern</b> (jauh di belakang WIB), atau candle terbaru
-        memang belum di-publish sumbernya. Coba klik tombol
-        <b>🔄 Refresh Data</b> di kanan atas beberapa saat lagi untuk
+        tersebut, bukan hari ini. Klik tombol
+        <b>Refresh Data</b> di atas beberapa saat lagi untuk
         mengecek ulang tanpa menunggu cache (1 jam) habis sendiri.
         </div>
         """, unsafe_allow_html=True)

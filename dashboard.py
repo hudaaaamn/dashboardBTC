@@ -671,7 +671,13 @@ def _fetch_price_coingecko(start):
     dipakai untuk fitur volatilitas intraday apa pun di pipeline ini).
     Bisa melempar exception -- ditangkap oleh caller.
     """
-    days = (pd.Timestamp.utcnow().normalize() - pd.Timestamp(start)).days + 2
+    # PENTING: pakai datetime.utcnow() (naive) di sini, BUKAN
+    # pd.Timestamp.utcnow() (tz-aware/UTC-localized) -- mengurangkan
+    # timestamp tz-aware dengan tz-naive (pd.Timestamp(start)) melempar
+    # "TypeError: Cannot subtract tz-naive and tz-aware datetime-like
+    # objects". Ini konsisten dengan today_utc di fetch_price() yang
+    # juga sengaja dibuat naive.
+    days = (pd.Timestamp(datetime.utcnow().date()) - pd.Timestamp(start)).days + 2
     days = min(max(days, 2), 365)  # granularitas harian gratis dibatasi ~365 hari
     r = requests.get(
         "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",

@@ -1199,7 +1199,7 @@ status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
     if price_source in PRICE_SOURCE_LABELS:
         _src_label = PRICE_SOURCE_LABELS[price_source]
-        st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga via {_src_label}</span>",
+        st.markdown(f"<span class='status-pill status-live'><span class='dot'></span>Harga via {_src_label}</span>",
                     unsafe_allow_html=True)
     elif is_price_fresh:
         st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga Up-to-date</span>",

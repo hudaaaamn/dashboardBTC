@@ -598,52 +598,62 @@ def _fetch_price_yfinance(start):
     return df
 
 
-def _fetch_price_binance(start):
+def _fetch_price_coingecko(start):
     """
-    Sumber fallback #2 jika Yahoo Finance gagal: klines harian BTCUSDT
-    dari Binance public API (tanpa API key, tanpa rate-limit ketat).
-    Dipaginasi 1000 candle/request karena limit Binance per-request.
+    Sumber fallback #2 jika Yahoo Finance gagal ATAU basi: CoinGecko
+    market_chart/range (harga harian BTC dalam USD).
+
+    KENAPA COINGECKO, BUKAN BINANCE:
+    Percobaan sebelumnya memakai Binance klines, tapi Binance memblokir
+    traffic dari IP Amerika Serikat untuk kepatuhan regulasi (error 451
+    "restricted location" -- lihat https://www.binance.com/en/terms).
+    Streamlit Community Cloud umumnya menjalankan aplikasi dari server
+    di region AS, sehingga panggilan ke Binance API bisa gagal DIAM-DIAM
+    (exception ditangkap, tidak fatal) tanpa ada hubungannya dengan
+    fresh/tidaknya data -- membuat fallback terlihat "tidak jalan" padahal
+    sebenarnya sudah dicoba tapi diblokir di level jaringan. CoinGecko
+    tidak memberlakukan pembatasan geografis seperti ini untuk endpoint
+    publiknya, sehingga jauh lebih aman dipakai dari server cloud mana pun.
+
+    Catatan: model hanya memakai kolom 'close' (lihat
+    build_features_and_predict -> df = df_p[["close"]]), jadi CoinGecko
+    yang hanya menyediakan satu harga per titik waktu (bukan OHLC penuh
+    seperti Yahoo Finance) sudah cukup. Kolom open/high/low diisi sama
+    dengan close sekadar supaya bentuk dataframe konsisten -- tidak
+    dipakai di mana pun dalam pipeline model/prediksi.
+
     Bisa melempar exception -- ditangkap oleh caller.
     """
-    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
-    end_ms   = int(pd.Timestamp.utcnow().timestamp() * 1000)
-    rows = []
-    cursor = start_ms
-    while cursor < end_ms:
-        r = requests.get(
-            "https://api.binance.com/api/v3/klines",
-            params={
-                "symbol": "BTCUSDT",
-                "interval": "1d",
-                "startTime": cursor,
-                "limit": 1000,
-            },
-            timeout=20,
-        )
-        r.raise_for_status()
-        batch = r.json()
-        if not batch:
-            break
-        rows.extend(batch)
-        last_open_time = batch[-1][0]
-        if last_open_time <= cursor:  # jaga-jaga supaya tidak infinite loop
-            break
-        cursor = last_open_time + 1
-        if len(batch) < 1000:
-            break
+    start_ts = int(pd.Timestamp(start).timestamp())
+    end_ts   = int(pd.Timestamp.utcnow().timestamp())
+    r = requests.get(
+        "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range",
+        params={"vs_currency": "usd", "from": start_ts, "to": end_ts},
+        timeout=30,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    prices  = payload.get("prices", [])
+    volumes = payload.get("total_volumes", [])
+    if not prices:
+        raise ValueError("CoinGecko tidak mengembalikan data harga")
 
-    if not rows:
-        raise ValueError("Binance tidak mengembalikan satu candle pun")
+    df_price = pd.DataFrame(prices, columns=["ts", "close"])
+    df_price["date"] = pd.to_datetime(df_price["ts"], unit="ms").dt.normalize()
+    s_price = df_price.groupby("date")["close"].last()
 
-    df = pd.DataFrame(rows, columns=[
-        "open_time","open","high","low","close","volume","close_time",
-        "quote_asset_volume","n_trades","taker_buy_base","taker_buy_quote","ignore",
-    ])
-    df["date"] = pd.to_datetime(df["open_time"], unit="ms")
-    for c in ["open","high","low","close","volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df[["date","open","high","low","close","volume"]].set_index("date")
-    df = df[~df.index.duplicated(keep="first")].sort_index().dropna()
+    df_vol = pd.DataFrame(volumes, columns=["ts", "volume"]) if volumes else pd.DataFrame(columns=["ts","volume"])
+    if len(df_vol):
+        df_vol["date"] = pd.to_datetime(df_vol["ts"], unit="ms").dt.normalize()
+        s_vol = df_vol.groupby("date")["volume"].last()
+    else:
+        s_vol = pd.Series(dtype=float)
+
+    df = pd.concat([s_price, s_vol.rename("volume")], axis=1)
+    df["open"] = df["close"]
+    df["high"] = df["close"]
+    df["low"]  = df["close"]
+    df = df[["open","high","low","close","volume"]].sort_index().dropna(subset=["close"])
     return df
 
 

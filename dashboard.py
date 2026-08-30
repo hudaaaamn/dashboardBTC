@@ -178,11 +178,6 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
 .stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent; }}
 .stTabs [data-baseweb="tab-border"] {{ display:none; }}
 
-/* ---- Ikon tab & expander (custom line-icon, pengganti emoji) ----
-   Lihat blok "IKON KUSTOM" di atas untuk alasan & definisi ICON_*.
-   `background-color: currentColor` + CSS mask supaya warna ikon
-   otomatis mengikuti warna teks tab (redup saat idle, gelap saat aktif)
-   tanpa perlu aset terpisah per-state. */
 .stTabs [data-baseweb="tab"] {{
     display:flex !important; align-items:center; gap:8px;
 }}
@@ -214,13 +209,6 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
     -webkit-mask-position:center; mask-position:center;
 }}
 
-/* ---- Hilangkan sisa indikator underline merah bawaan BaseWeb ----
-   Tab aktif sudah ditandai lewat pill putih ({{{{[aria-selected="true"]}}}}
-   di atas) ala segmented-control apple.com. Indikator underline bawaan
-   Streamlit/BaseWeb (warna tema merah, lebar mengikuti teks) tidak ikut
-   didesain ulang oleh pill tsb, sehingga tampil sebagai sisa garis pendek
-   di bawah teks yang terlihat seperti "terpotong". Dihilangkan total
-   supaya tidak dobel dengan pill putih yang sudah jadi penanda utama. */
 .stTabs [data-baseweb="tab"],
 .stTabs [data-baseweb="tab"] * {{
     border-bottom:none !important;
@@ -244,11 +232,6 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
     letter-spacing: 0;
     text-transform: none;
 }}
-/* Nilai metrik: Streamlit secara default memotongnya dengan "..." kalau
-   kontennya panjang (mis. "$76,145 – $82,xxx"), padahal masih ada ruang.
-   Diizinkan membungkus ke baris kedua dan ukuran sedikit dikecilkan +
-   dibuat sedikit menyesuaikan lebar kartu, supaya nilai selalu utuh
-   terbaca tanpa terpotong di layar desktop mana pun. */
 [data-testid="stMetricValue"] {{
     overflow: visible !important;
 }}
@@ -289,7 +272,7 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
 .regime-side {{ background:{SURFACE_2}; color:{TEXT_DIM}; padding:6px 14px;
                 border-radius:20px; font-weight:600; font-size:13px; border:none; }}
 
-/* ---- Info / warning boxes — kartu netral, aksen warna hanya di label ---- */
+/* ---- Info / warning boxes ---- */
 .info-box {{
     background:{SURFACE}; border:1px solid {BORDER};
     border-radius:16px; padding:16px 20px; font-size:13.5px; color:{TEXT_DIM};
@@ -310,6 +293,18 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
     line-height:1.6; margin-top:18px;
 }}
 .disclaimer-box b {{ color:{TEXT}; }}
+
+/* ---- Fallback banner (sumber data gagal diambil) ----
+   Merah tipis (bukan warn-box amber biasa) supaya user langsung sadar
+   ini beda level dari sekadar "data tertinggal beberapa hari" -- ini
+   berarti fetch-nya betul-betul GAGAL dan dashboard sedang memakai
+   nilai pengganti/darurat, bukan data riil sama sekali. */
+.fallback-box {{
+    background:#fdecea; border:1px solid rgba(213,55,43,0.28);
+    border-radius:16px; padding:16px 20px; font-size:13.5px; color:#8a2a22;
+    line-height:1.65; margin-top:12px; margin-bottom:20px;
+}}
+.fallback-box b {{ color:{RED}; font-weight:600; }}
 
 /* ---- Section label ---- */
 .section-label {{
@@ -332,11 +327,6 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
 [data-testid="stExpander"] summary p {{ color:{TEXT} !important; }}
 [data-testid="stExpanderDetails"] {{ color:{TEXT_DIM}; }}
 
-/* ---- Pengaman kontras tambahan untuk widget native ----
-   Beberapa komponen Streamlit bawaan (bukan hasil st.markdown kustom di
-   atas) mengambil warna teks dari base theme aplikasi. Baris ini
-   memastikan semuanya tetap gelap-di-atas-terang walau base theme app
-   pengguna (config.toml / preferensi sistem) berbeda dari yang kita set. */
 [data-testid="stMarkdownContainer"] p,
 [data-testid="stMarkdownContainer"] li,
 [data-testid="stCaptionContainer"],
@@ -351,11 +341,6 @@ code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace,
 [data-testid="stTable"] td, [data-testid="stTable"] th {{ color:{TEXT} !important; }}
 .stSelectbox label, .stRadio label {{ color:{TEXT} !important; }}
 
-/* ---- Fokus & shadow saat diklik — dibuat halus, bukan kotak gelap kasar ----
-   Default focus ring beberapa komponen BaseWeb mengikuti warna base theme
-   (bisa tampak sebagai kotak gelap yang kontras kasar di atas latar
-   terang). Diganti dengan ring tipis warna aksen, tetap terlihat jelas
-   untuk aksesibilitas keyboard, tapi tidak kasar saat diklik mouse. */
 button:focus, button:focus-visible,
 [data-baseweb="tab"]:focus, [data-baseweb="tab"]:focus-visible,
 [tabindex]:focus-visible {{
@@ -363,14 +348,6 @@ button:focus, button:focus-visible,
     outline-offset: 2px;
     box-shadow: none !important;
 }}
-/* ---- Status widget bawaan Streamlit ("Running fungsi_x()...") ----
-   Muncul otomatis di kiri-atas konten saat sebuah fungsi ber-decorator
-   @st.cache_data (mis. build_features_and_predict()) sedang dieksekusi.
-   Ini elemen "chrome" internal Streamlit sendiri (bukan hasil st.markdown
-   kita), jadi selalu memakai tema gelap bawaan Streamlit terlepas dari
-   CSS halaman ini -- perlu di-override manual. Beberapa versi Streamlit
-   memakai testid berbeda, jadi beberapa selector dipasang sekaligus agar
-   tetap kena di versi manapun. */
 [data-testid="stStatusWidget"],
 [data-testid="stStatusWidget"] > div,
 div[class*="StatusWidget"] {{
@@ -393,14 +370,6 @@ div[class*="StatusWidget"] * {{
     padding: 1px 4px;
 }}
 
-/* ---- Tooltip bawaan Streamlit (dari parameter help= pada st.button) ----
-   Default: kotak gelap solid + shadow + teks putih. Diganti jadi tanpa
-   background/shadow, teks hitam polos mengikuti warna teks halaman.
-   Beberapa versi Streamlit merender tooltip ini lewat testid berbeda
-   (stTooltipContent) atau lewat komponen BaseWeb polos (popover/tooltip
-   dengan role="tooltip", tanpa testid sama sekali) -- semua kemungkinan
-   selector dipasang sekaligus, dengan !important ganda, supaya menang
-   dari CSS inline/emotion-cache bawaan komponen tsb di versi manapun. */
 [data-testid="stTooltipContent"],
 div[data-baseweb="tooltip"],
 div[data-baseweb="popover"] [role="tooltip"],
@@ -438,17 +407,8 @@ div[data-baseweb="popover"] [role="tooltip"] *,
 }}
 .stButton > button:focus:not(:focus-visible) {{ box-shadow:none !important; outline:none !important; }}
 
-/* ---- color-scheme: light ----
-   Chrome/Edge punya fitur "auto-darken" untuk kontrol native (button,
-   input, select) yang mengikuti dark-mode OS/browser TERLEPAS dari CSS
-   halaman, kalau halaman tidak secara eksplisit bilang dirinya bertema
-   terang. Baris ini adalah sinyal resmi ke browser: "halaman ini memang
-   terang", supaya <button> (Refresh Data) tidak lagi ikut dipaksa gelap. */
 :root, html {{ color-scheme: light !important; }}
 
-/* ---- Tombol (Refresh Data) — pill hijau ----
-   Selector diperkuat (atribut kind + testid) supaya menang dari style
-   bawaan BaseWeb yang kadang punya spesifisitas lebih tinggi. */
 .stButton > button,
 .stButton > button[kind],
 [data-testid="stBaseButton-secondary"],
@@ -463,14 +423,6 @@ div[data-baseweb="popover"] [role="tooltip"] *,
 }}
 .stButton > button:hover {{ background:#16a34a !important; border-color:#16a34a !important; }}
 
-/* ---- Tabel HTML kustom (pengganti st.dataframe) ----
-   st.dataframe dirender lewat komponen grid (canvas) milik Streamlit yang
-   mengambil warnanya dari tema internal Streamlit sendiri, BUKAN dari CSS
-   halaman ini — makanya walau seluruh halaman sudah terang, tabelnya bisa
-   tetap gelap kalau tema Streamlit belum kebaca sebagai "light" di sisi
-   pengguna. Untuk tabel yang datanya sudah final untuk ditampilkan (bukan
-   butuh sortir/scroll interaktif), dipakai tabel HTML biasa yang 100%
-   ikut CSS di sini — jaminan selalu terang, di browser/perangkat manapun. */
 .table-wrap {{
     background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
     overflow-x:auto; overflow-y:hidden; margin-top:8px;
@@ -492,13 +444,6 @@ table.apple-table tbody td {{
 table.apple-table tbody tr:last-child td {{ border-bottom:none; }}
 table.apple-table tbody tr:hover {{ background:{BG}; }}
 
-/* ---- Selectbox (mis. "Periode" di halaman Analisis Data) ----
-   Sama seperti kasus tombol Refresh sebelumnya: kontrol native BaseWeb
-   ini ambil warna dari tema internal Streamlit/browser (bisa auto-dark
-   di mobile), bukan dari CSS kustom halaman ini. Kotak select (state
-   tertutup) DAN daftar pilihan (state terbuka, dirender di portal
-   terpisah lewat data-baseweb="popover"/"menu") sama-sama di-override
-   supaya konsisten terang mengikuti desain apple.com di seluruh halaman. */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
     background: {SURFACE} !important;
     border: 1px solid {BORDER} !important;
@@ -530,42 +475,11 @@ div[data-baseweb="menu"] li[aria-selected="true"] {{
     color: {TEXT} !important;
 }}
 
-/* ---- Cegah scroll horizontal level HALAMAN (body/app) bocor akibat
-   tabel lebar ----
-   Tabel "Tabel 4.1" (di tab Komparasi Model) sengaja punya min-width
-   besar (880px) supaya isinya tidak dempet di layar sempit, dan sudah
-   dibungkus .table-wrap dengan overflow-x:auto miliknya sendiri. Tanpa
-   baris ini, sebagian browser mobile tetap mengizinkan tabel lebar itu
-   memperlebar body/halaman secara keseluruhan (bukan cuma di dalam
-   .table-wrap), sehingga muncul scroll horizontal di level HALAMAN.
-   Karena panel-panel st.tabs() sama-sama tetap berada di satu halaman
-   (cuma disembunyikan/ditampilkan), posisi scroll horizontal itu ikut
-   terbawa saat pindah ke tab lain (mis. "Analisis Data"), membuat
-   kontennya tampak geser/terpotong di kiri layar padahal isi tab
-   tersebut sendiri tidak lebar. Baris ini mengunci body/app supaya
-   TIDAK bisa scroll horizontal secara keseluruhan -- elemen yang
-   memang perlu discroll (.table-wrap, tabel markdown) tetap bisa
-   discroll secara lokal lewat overflow-x:auto miliknya sendiri. */
 html, body, .stApp, .main, .block-container {{
     overflow-x: hidden !important;
     max-width: 100vw;
 }}
 
-/* ---- Tabel markdown pipe-syntax (mis. di dalam expander "Uji
-   Signifikansi Statistik", "Ablation Study") ----
-   Tabel-tabel ini ditulis lewat sintaks markdown biasa (| kolom |...|),
-   BUKAN lewat helper render_table() yang sudah punya wrapper
-   overflow-x:auto (lihat .table-wrap). PERBAIKAN (revisi ke-2): versi
-   sebelumnya membuat <table> jadi display:block sementara <thead> dan
-   <tbody> masing-masing jadi display:table TERPISAH -- akibatnya header
-   dan body menghitung lebar kolom sendiri-sendiri secara independen,
-   sehingga kolom header tidak sejajar dengan kolom isinya (terlihat
-   "berantakan" di mobile). Perbaikan: <table> TETAP satu kesatuan
-   (table-layout normal, header & body otomatis sejajar karena memang
-   satu elemen <table> yang sama) -- yang diberi overflow-x:auto adalah
-   CONTAINER pembungkusnya ([data-testid="stMarkdownContainer"]), bukan
-   tabelnya sendiri. Dengan begitu seluruh tabel discroll sebagai satu
-   blok utuh, kolom header & body selalu sejajar di posisi scroll manapun. */
 [data-testid="stMarkdownContainer"]:has(table) {{
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch;
@@ -584,10 +498,8 @@ html, body, .stApp, .main, .block-container {{
     background: {SURFACE_2}; color: {TEXT_DIM}; text-align:left;
 }}
 
-/* ---- Jarak antar-kartu supaya tidak "nempel" ---- */
-.warn-box, .info-box, .disclaimer-box {{ margin-bottom:20px; }}
+.warn-box, .info-box, .disclaimer-box, .fallback-box {{ margin-bottom:20px; }}
 
-/* ---- Menyeragamkan tinggi baris kartu (metrik, dll) agar rapi sejajar ---- */
 [data-testid="stHorizontalBlock"] {{ align-items: stretch !important; }}
 [data-testid="stHorizontalBlock"] > div {{ display:flex !important; }}
 [data-testid="stHorizontalBlock"] > div > div {{ width:100%; display:flex; }}
@@ -597,7 +509,6 @@ html, body, .stApp, .main, .block-container {{
     width:100%;
 }}
 
-/* ---- Responsif tablet/mobile ---- */
 @media (max-width: 900px) {{
     .topbar {{ padding:14px 18px; border-radius:16px; }}
     .topbar-title h1 {{ font-size:16.5px; }}
@@ -607,19 +518,6 @@ html, body, .stApp, .main, .block-container {{
     [data-testid="stHorizontalBlock"] > div {{ min-width: 46% !important; }}
     .block-container {{ padding-left:0.9rem; padding-right:0.9rem; }}
 
-    /* ---- Tab navigasi (Prediksi / Komparasi Model / Analisis Data) di mobile ----
-       Default-nya tab-list ini selebar isinya (width:fit-content) dan
-       tab-nya berjajar dalam satu baris tanpa boleh membungkus
-       (flex-wrap bawaan BaseWeb: nowrap). Di layar sempit, 3 tab tidak
-       muat dalam satu baris -- sebelumnya ini masih bisa discroll ke
-       samping, tapi sejak block-container dikunci overflow-x:hidden
-       (utk mencegah bug scroll horizontal bocor antar-tab), tab paling
-       kanan ("Analisis Data") jadi ke-CLIP/terpotong alih-alih bisa
-       discroll. Perbaikan: izinkan tab-list membungkus ke baris baru
-       (flex-wrap:wrap) dan lebar penuh, dengan tiap tab diberi
-       flex-basis ~48% -- hasilnya 2 tab pertama otomatis sejajar di
-       baris atas, tab ke-3 "turun" sendiri ke baris kedua secara utuh
-       (bukan terpotong), persis seperti pola 2+1 yang diinginkan. */
     .stTabs [data-baseweb="tab-list"] {{
         flex-wrap: wrap !important;
         width: 100% !important;
@@ -630,13 +528,6 @@ html, body, .stApp, .main, .block-container {{
         justify-content:center;
     }}
 
-    /* ---- Spasi bawah khusus tab TERAKHIR ("Analisis Data") di mobile ----
-       Halaman ini ditutup oleh chart+info-box tanpa jarak tambahan ke
-       tepi layar, sehingga di mobile terasa "mepet"/terpotong dekat
-       navigasi browser. Ditarget lewat urutan panel tab ke-3 (Prediksi=1,
-       Komparasi Model=2, Analisis Data=3) -- HANYA berlaku di mobile,
-       supaya tampilan desktop (yang sudah cukup lega lewat
-       .block-container padding-bottom:3rem) tidak berubah. */
     [data-baseweb="tab-panel"]:nth-of-type(3) {{
         padding-bottom: 56px;
     }}
@@ -655,31 +546,88 @@ def render_table(df: pd.DataFrame):
     st.markdown(f"<div class='table-wrap'>{html}</div>", unsafe_allow_html=True)
 
 # ============================================================
-# FUNGSI FETCH DATA (di-cache 1 jam)
+# HELPER — kotak literasi fallback (dipakai saat sumber data gagal
+# diambil sama sekali, bukan sekadar "tertinggal beberapa hari")
+# ------------------------------------------------------------
+# Catatan: helper ini HANYA menampilkan keterangan ke user. Tidak ada
+# logic model/prediksi yang berubah -- fallback data itu sendiri
+# (nilai default, penyaringan tanggal, dsb) tetap dilakukan di masing-
+# masing fungsi fetch_*, helper ini cuma "corong" pesannya ke layar.
 # ============================================================
+def render_fallback_box(judul: str, penjelasan: str, dampak: str):
+    st.markdown(f"""
+    <div class='fallback-box'>
+    {WARN_ICON}<b>{judul}</b><br>
+    {penjelasan}<br><br>
+    <span style='font-size:12px;'>{dampak}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============================================================
+# FUNGSI FETCH DATA (di-cache 1 jam)
+# ------------------------------------------------------------
+# CATATAN FALLBACK LITERASI:
+# Ketiga fungsi fetch_* di bawah ini TIDAK diubah alur/logic intinya.
+# Yang ditambahkan hanyalah:
+#   1. Penangkapan pesan error asli (bukan ditelan begitu saja).
+#   2. Nilai pengganti yang aman secara struktur (tidak bikin baris
+#      kode berikutnya crash karena kolom hilang), persis seperti
+#      perilaku sebelumnya untuk sumber yang sudah punya fallback.
+#   3. Elemen tambahan pada dict return: "_fallback_reason" (str atau
+#      None) supaya lapisan tampilan (UI) tahu persis pesan apa yang
+#      harus ditunjukkan ke user, tanpa perlu menebak dari flag boolean
+#      saja.
+# ============================================================
+
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
-    import yfinance as yf
-    df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.reset_index()
-    date_col = "Date" if "Date" in df.columns else df.columns[0]
-    df["date"] = pd.to_datetime(df[date_col])
-    if df["date"].dt.tz is not None:
-        df["date"] = df["date"].dt.tz_localize(None)
-    df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
-    df.columns = ["open","high","low","close","volume"]
-    df = df.dropna()
+    """
+    Return: (df, fallback_reason)
+        df              : dataframe harga OHLCV (kosong jika gagal total)
+        fallback_reason : None jika sukses, atau string penjelasan error
+                          jika Yahoo Finance gagal diakses sama sekali.
+    """
+    try:
+        import yfinance as yf
+        df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+        date_col = "Date" if "Date" in df.columns else df.columns[0]
+        df["date"] = pd.to_datetime(df[date_col])
+        if df["date"].dt.tz is not None:
+            df["date"] = df["date"].dt.tz_localize(None)
+        df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
+        df.columns = ["open","high","low","close","volume"]
+        df = df.dropna()
 
-    today_utc = pd.Timestamp(datetime.utcnow().date())
-    df = df[df.index < today_utc]  
-    return df
+        today_utc = pd.Timestamp(datetime.utcnow().date())
+        df = df[df.index < today_utc]
+
+        if len(df) == 0:
+            return df, ("Yahoo Finance merespons tapi tidak mengembalikan "
+                         "satu baris data harga BTC-USD pun.")
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(columns=["open","high","low","close","volume"]), (
+            f"Gagal mengambil data harga dari Yahoo Finance ({type(e).__name__}: {e})."
+        )
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
+    """
+    Return: (df, is_live, fallback_reason)
+        df              : dataframe kolom [value, value_classification, polarity]
+        is_live         : True jika berhasil ambil dari API Fear & Greed
+        fallback_reason : None jika sukses, atau string penjelasan error
+                          jika API gagal diakses (df lalu diisi nilai
+                          netral/polarity=0 sepanjang rentang tanggal
+                          harga, supaya pipeline tidak crash karena
+                          kolom 'polarity' hilang).
+    """
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
+        r.raise_for_status()
         data = r.json()["data"]
         df = pd.DataFrame(data)
         df["date"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
@@ -687,9 +635,26 @@ def fetch_sentiment():
         mapping = {"Extreme Fear":-1,"Fear":-0.5,"Neutral":0,"Greed":0.5,"Extreme Greed":1}
         df["polarity"] = df["value_classification"].map(mapping)
         df["polarity"] = df["polarity"].fillna((df["value"].astype(int)-50)/50)
-        return df, True
-    except Exception:
-        return pd.DataFrame(), False
+
+        if len(df) == 0:
+            raise ValueError("API mengembalikan data kosong")
+
+        return df, True, None
+    except Exception as e:
+        # Fallback netral: rentang tanggal panjang, polarity=0 (Neutral),
+        # supaya join & ffill di build_features_and_predict() tetap
+        # menemukan kolom 'polarity' dan tidak crash seperti sebelumnya.
+        idx = pd.date_range("2018-01-01", pd.Timestamp.today().normalize(), freq="D")
+        df = pd.DataFrame({
+            "value": 50,
+            "value_classification": "Neutral",
+            "polarity": 0.0,
+        }, index=idx)
+        df.index.name = "date"
+        reason = (f"Gagal mengambil data sentimen dari API Fear & Greed "
+                  f"({type(e).__name__}: {e}). Dashboard sementara memakai "
+                  f"nilai netral (polarity = 0) untuk semua tanggal.")
+        return df, False, reason
 
 @st.cache_data(ttl=3600)
 def fetch_onchain(start="2021-01-01"):
@@ -703,10 +668,17 @@ def fetch_onchain(start="2021-01-01"):
        kemungkinan besar TIDAK live lagi (CoinMetrics menghentikan
        pembaruan sebagian metrik Community Data sejak ~Mei 2026), sehingga
        datanya bisa berhenti di tanggal tertentu di masa lalu.
+    3. Jika CSV fallback JUGA gagal (mis. GitHub raw tidak bisa diakses,
+       koneksi jaringan bermasalah) -> baru dianggap gagal total, dan
+       dikembalikan dataframe kosong + alasan gagal, alih-alih membiarkan
+       exception menjalar tanpa keterangan.
 
-    Return: (df, is_live)
-        df       : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
-        is_live  : True jika data diambil dari jalur live/premium
+    Return: (df, is_live, fallback_reason)
+        df              : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
+        is_live         : True jika data diambil dari jalur live/premium
+        fallback_reason : None jika sukses (live ataupun CSV fallback biasa),
+                          atau string penjelasan jika KEDUA sumber (live &
+                          CSV) sama-sama gagal diakses.
     """
     api_key = None
     try:
@@ -739,18 +711,30 @@ def fetch_onchain(start="2021-01-01"):
                 df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
                 df = df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:]
                 if len(df.dropna()) > 0:
-                    return df, True
+                    return df, True, None
         except Exception:
-            pass 
+            pass  # lanjut ke fallback CSV di bawah, sesuai perilaku semula
 
-    # --- Fallback CSV Community gratis 
-    url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
-    r = requests.get(url, timeout=30)
-    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-    df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    df = df.set_index("time")
-    df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
-    return df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:], False
+    # --- Fallback CSV Community gratis
+    try:
+        url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        df = df.set_index("time")
+        df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
+        df = df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:]
+        if len(df) == 0:
+            raise ValueError("CSV Community tidak mengandung baris pada rentang tanggal ini")
+        return df, False, None
+    except Exception as e:
+        # Gagal total (live gagal/tidak ada key, CSV juga gagal). Kembalikan
+        # struktur kosong yang aman + alasan, alih-alih exception mentah.
+        empty = pd.DataFrame(columns=["exchange_netflow","FlowInExNtv","FlowOutExNtv"])
+        reason = (f"Gagal mengambil data on-chain dari CoinMetrics maupun CSV "
+                  f"fallback-nya di GitHub ({type(e).__name__}: {e}).")
+        return empty, False, reason
 
 # ============================================================
 # FUNGSI FEATURE ENGINEERING + MODEL
@@ -761,9 +745,18 @@ def build_features_and_predict():
     import xgboost as xgb
 
     # Fetch semua data
-    df_p        = fetch_price()
-    df_s, _     = fetch_sentiment()
-    df_o, onchain_live = fetch_onchain()
+    df_p, price_fallback_reason = fetch_price()
+    if price_fallback_reason is not None or len(df_p) == 0:
+        # Harga adalah data WAJIB (tidak ada fallback nilai pengganti yang
+        # masuk akal untuk harga BTC) -- logic pipeline tetap dihentikan
+        # di sini seperti semula, hanya pesannya dibuat jelas untuk user.
+        raise RuntimeError(
+            price_fallback_reason or
+            "Data harga BTC kosong setelah diambil dari Yahoo Finance."
+        )
+
+    df_s, sent_is_live, sent_fallback_reason = fetch_sentiment()
+    df_o, onchain_live, onchain_fallback_reason = fetch_onchain()
 
     df = df_p[["close"]].copy()
     df = df.join(df_s[["polarity"]], how="left")
@@ -778,6 +771,15 @@ def build_features_and_predict():
 
     df["polarity"]         = df["polarity"].ffill()
     df["exchange_netflow"] = df["exchange_netflow"].ffill()
+
+    # Jika on-chain gagal total (df_o kosong), exchange_netflow akan
+    # kosong semua (NaN) setelah ffill dan tidak ada nilai riil untuk
+    # dipakai. Sama seperti sentimen, dipakai nilai netral (0) sebagai
+    # fallback literasi, supaya baris berikut (dropna) tidak menghapus
+    # SELURUH data harga hanya karena on-chain gagal diambil.
+    if onchain_fallback_reason is not None:
+        df["exchange_netflow"] = df["exchange_netflow"].fillna(0.0)
+
     df = df.dropna(subset=["close","polarity","exchange_netflow"])
 
     # Features
@@ -887,15 +889,13 @@ def build_features_and_predict():
         "onchain_live": onchain_live,
         "onchain_last_real_date": onchain_last_real_date,
         "onchain_staleness_days": onchain_staleness_days,
+        # --- Tambahan untuk literasi fallback di lapisan UI ---
+        "sent_fallback_reason": sent_fallback_reason,
+        "onchain_fallback_reason": onchain_fallback_reason,
     }
 
 # ============================================================
 # STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
-# ------------------------------------------------------------
-# Lihat "CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka)"
-# di kepala berkas. Flag ini menentukan apakah kita berhenti setelah
-# menampilkan topbar saja (belum pernah dijalankan) atau lanjut memuat
-# data + menjalankan model (sudah/baru saja ditekan tombolnya).
 # ============================================================
 if "dashboard_started" not in st.session_state:
     st.session_state.dashboard_started = False
@@ -934,10 +934,7 @@ with refresh_col:
 
 # ============================================================
 # GATE — jika model/pipeline belum pernah dijalankan di sesi ini,
-# tampilkan hanya topbar + ajakan klik tombol, JANGAN fetch/predict
-# apa pun dulu (fetch_price/fetch_sentiment/fetch_onchain/
-# build_features_and_predict semuanya baru dipanggil setelah tombol
-# ditekan, lihat blok "LOAD DATA" di bawah st.stop() ini).
+# tampilkan hanya topbar + ajakan klik tombol.
 # ============================================================
 if not st.session_state.dashboard_started:
     st.markdown(f"""
@@ -966,13 +963,29 @@ with st.spinner("Memuat data dan menjalankan model..."):
     try:
         result = build_features_and_predict()
         df_full = result["df"]
-        df_p    = fetch_price()
-        df_s, sent_real = fetch_sentiment()
-        df_o, onchain_live_flag = fetch_onchain()
+        df_p, _price_fallback_reason_ui = fetch_price()
+        df_s, sent_real, _sent_fallback_reason_ui = fetch_sentiment()
+        df_o, onchain_live_flag, _onchain_fallback_reason_ui = fetch_onchain()
         DATA_OK = True
     except Exception as e:
         DATA_OK = False
-        st.error(f"Gagal memuat data: {e}")
+        # ---- Fallback literasi untuk kegagalan FATAL (harga BTC gagal
+        # total, satu-satunya sumber yang tidak punya nilai pengganti) ----
+        st.markdown(f"""
+        <div class='fallback-box'>
+        {WARN_ICON}<b>Dashboard gagal memuat data harga Bitcoin.</b><br>
+        Detail teknis: <code>{e}</code><br><br>
+        <span style='font-size:12px;'>
+        Ini biasanya berarti Yahoo Finance (sumber data harga BTC-USD) sedang
+        tidak bisa diakses, atau ada gangguan koneksi jaringan dari server
+        dashboard. Data harga adalah satu-satunya sumber yang <b>wajib
+        tersedia</b> untuk menjalankan model, sehingga tidak ada nilai
+        pengganti yang dipakai di sini (berbeda dari data sentimen/on-chain
+        yang punya fallback nilai netral). Coba klik <b>Refresh Data</b>
+        beberapa saat lagi.
+        </span>
+        </div>
+        """, unsafe_allow_html=True)
         st.stop()
 
 price_last_date   = result["last_date"]
@@ -981,6 +994,29 @@ is_price_fresh = price_staleness_days <= 1
 
 onchain_stale_days = result["onchain_staleness_days"]
 is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and onchain_stale_days <= 1)
+
+# ---- Ambil alasan fallback (jika ada) untuk ditampilkan sebagai
+# banner literasi paling atas, sebelum status pill ----
+sent_fallback_reason    = result.get("sent_fallback_reason")
+onchain_fallback_reason = result.get("onchain_fallback_reason")
+
+if sent_fallback_reason:
+    render_fallback_box(
+        "Data sentimen gagal diambil.",
+        sent_fallback_reason,
+        "Dampak: fitur sentimen pada prediksi memakai nilai netral (bukan "
+        "kondisi pasar riil hari ini), sehingga pengaruh sentimen terhadap "
+        "prediksi untuk sesi ini tidak aktif."
+    )
+
+if onchain_fallback_reason:
+    render_fallback_box(
+        "Data on-chain gagal diambil (live maupun fallback CSV).",
+        onchain_fallback_reason,
+        "Dampak: fitur exchange netflow pada prediksi memakai nilai 0 "
+        "(dianggap tidak ada pergerakan bursa), berbeda dari kondisi "
+        "'tertinggal N hari' biasa yang setidaknya masih pakai nilai historis riil."
+    )
 
 status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
@@ -992,14 +1028,21 @@ with status_col0:
             f"<span class='status-pill status-stale'><span class='dot'></span>Harga tertinggal {price_staleness_days} hari</span>",
             unsafe_allow_html=True)
 with status_col1:
-    if is_onchain_fresh:
+    if onchain_fallback_reason:
+        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>On-chain gagal (fallback 0)</span>",
+                    unsafe_allow_html=True)
+    elif is_onchain_fresh:
         st.markdown("<span class='status-pill status-live'><span class='dot'></span>On-chain Live</span>",
                     unsafe_allow_html=True)
     else:
         st.markdown(f"<span class='status-pill status-stale'><span class='dot'></span>On-chain tertinggal {onchain_stale_days} hari</span>",
                     unsafe_allow_html=True)
 with status_col2:
-    st.markdown("<div></div>", unsafe_allow_html=True)
+    if sent_fallback_reason:
+        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>Sentimen gagal (fallback netral)</span>",
+                    unsafe_allow_html=True)
+    else:
+        st.markdown("<div></div>", unsafe_allow_html=True)
 
 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
@@ -1016,6 +1059,18 @@ with st.expander("Tentang dashboard ini"):
     Ini satu-satunya model yang dihitung ulang secara live untuk halaman prediksi saja. Semua model, dari model
     pembanding hingga usulan pada halaman "Komparasi Model" adalah referensi statis
     dari notebook eksperimen terpisah, bukan hasil live.
+    </span><br><br>
+    <b>Apa yang terjadi jika sumber data gagal diambil?</b><br>
+    <span style='font-size:11.5px;color:{TEXT_MUTE}'>
+    • <b>Harga (Yahoo Finance)</b>: wajib tersedia. Jika gagal, dashboard
+    berhenti dan menampilkan keterangan error, karena tidak ada pengganti
+    yang wajar untuk data harga.<br>
+    • <b>Sentimen (Fear & Greed)</b>: jika API gagal diakses, dashboard tetap
+    berjalan memakai nilai netral (polarity = 0) dan menampilkan banner
+    merah di bagian atas halaman.<br>
+    • <b>On-chain (CoinMetrics)</b>: punya dua lapis fallback (API live →
+    CSV Community). Jika kedua-duanya gagal, dashboard tetap berjalan
+    memakai netflow = 0 dan menampilkan banner merah serupa.
     </span>
     </div>
     <div class='disclaimer-box'>
@@ -1038,6 +1093,22 @@ with tab_pred:
     </div>
     """, unsafe_allow_html=True)
 
+    if sent_fallback_reason:
+        render_fallback_box(
+            "Sentimen pasar tidak tersedia untuk prediksi ini.",
+            sent_fallback_reason,
+            "Prediksi di bawah dihitung dengan asumsi sentimen netral, bukan "
+            "kondisi Fear & Greed riil hari ini."
+        )
+
+    if onchain_fallback_reason:
+        render_fallback_box(
+            "Data on-chain tidak tersedia untuk prediksi ini.",
+            onchain_fallback_reason,
+            "Prediksi di bawah dihitung dengan asumsi tidak ada pergerakan "
+            "netflow bursa (netflow = 0), bukan aktivitas on-chain riil."
+        )
+
     if not is_price_fresh:
         st.markdown(f"""
         <div class='warn-box'>
@@ -1051,7 +1122,7 @@ with tab_pred:
         </div>
         """, unsafe_allow_html=True)
 
-    if not is_onchain_fresh:
+    if not is_onchain_fresh and not onchain_fallback_reason:
         st.markdown(f"""
         <div class='warn-box'>
         {WARN_ICON}<b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
@@ -1201,8 +1272,14 @@ with tab_pred:
             2: "Bull — tren naik, return positif dominan"
         }[last_regime]
         netflow_caption = (
+            "(nilai fallback 0 — on-chain gagal diambil, lihat peringatan di atas)"
+            if onchain_fallback_reason else
             "(nilai historis terakhir — on-chain belum live, lihat peringatan di atas)"
             if not is_onchain_fresh else ""
+        )
+        sent_caption = (
+            " (nilai fallback netral — sentimen gagal diambil, lihat peringatan di atas)"
+            if sent_fallback_reason else ""
         )
         st.markdown(f"""
         <div class='info-box'>
@@ -1210,7 +1287,8 @@ with tab_pred:
         <span style='font-size:12px;color:{TEXT_MUTE}'>{regime_desc}</span><br><br>
         <b>Sentimen pasar:</b>
         <span style='color:{sent_color}'>{sent_label}</span>
-        (skor: {last_sent:.2f})<br><br>
+        (skor: {last_sent:.2f})
+        <span style='font-size:11px;color:{AMBER}'>{sent_caption}</span><br><br>
         <b>On-chain netflow:</b>
         {last_netflow:+,.0f} BTC
         <span style='font-size:11px;color:{AMBER}'>{netflow_caption}</span><br>
@@ -1577,14 +1655,18 @@ with tab_data:
                        ticktext=["Ext Fear","Fear","Neutral","Greed","Ext Greed"]),
             xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
         )
-        if not sent_real:
+        if sent_fallback_reason:
+            st.warning(f"Sentimen: {sent_fallback_reason}")
+        elif not sent_real:
             st.warning("Sentimen: data sintetis (API tidak tersedia)")
         st.plotly_chart(fig_sent, use_container_width=True)
 
     with col_n:
         st.markdown("<div class='section-label'>On-Chain — Exchange Netflow</div>",
                     unsafe_allow_html=True)
-        if not is_onchain_fresh:
+        if onchain_fallback_reason:
+            st.warning(f"On-chain: {onchain_fallback_reason}")
+        elif not is_onchain_fresh:
             st.warning(
                 f"Data on-chain historis terakhir: "
                 f"{result['onchain_last_real_date'].strftime('%d %b %Y')}. "
@@ -1601,7 +1683,9 @@ with tab_data:
             name="Netflow"
         ))
         fig_nf.add_hline(y=0, line_dash="dash", line_color=TEXT_MUTE)
-        if not is_onchain_fresh and result["onchain_last_real_date"] >= cutoff:
+        if (not is_onchain_fresh and not onchain_fallback_reason
+                and result["onchain_last_real_date"] is not None
+                and result["onchain_last_real_date"] >= cutoff):
             last_real_dt = result["onchain_last_real_date"].to_pydatetime()
             fig_nf.add_shape(
                 type="line", xref="x", yref="paper",

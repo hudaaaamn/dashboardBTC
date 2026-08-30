@@ -647,49 +647,106 @@ def _fetch_price_binance(start):
     return df
 
 
+# Ambang batas "segar": kalau baris terakhir sebuah sumber lebih tua dari
+# ini (dalam hari, dibanding tanggal hari ini), sumber itu dianggap BASI
+# dan layak dibandingkan dengan sumber lain -- bukan cuma dipakai apa
+# adanya selama fetch-nya tidak melempar exception. Nilai 1 hari dipilih
+# supaya konsisten dengan logic `is_price_fresh` yang sudah dipakai di
+# bagian tampilan (staleness_days <= 1 dianggap up-to-date).
+PRICE_FRESH_THRESHOLD_DAYS = 1
+
+
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     """
     Return: (df, source, fallback_reason)
         df              : dataframe harga OHLCV (kosong jika gagal total)
-        source          : "yfinance" atau "binance" jika sukses, None jika
-                           gagal total (tidak ada sumber yang berhasil)
-        fallback_reason : None jika sukses lewat sumber utama (yfinance).
-                          Jika yfinance gagal tapi Binance berhasil, berisi
-                          keterangan singkat (bukan error fatal, sekadar
-                          info sumber berganti). Jika KEDUA sumber gagal,
-                          berisi penjelasan error fatal.
+        source          : "yfinance" atau "binance" -- SIAPA PUN yang
+                           datanya paling baru pada saat fetch ini
+                           dijalankan, bukan otomatis yfinance jika dia
+                           tidak melempar error. None jika gagal total.
+        fallback_reason : None jika yfinance dipilih DAN datanya sudah
+                          segar (tidak perlu penjelasan apa pun ke user).
+                          Berisi keterangan jika:
+                          - Binance dipilih (baik karena yfinance error,
+                            ATAU karena yfinance sukses tapi datanya lebih
+                            basi dibanding Binance).
+                          - Kedua sumber gagal total (fatal).
+
+    Catatan desain: sebelumnya fallback ke Binance HANYA terjadi kalau
+    yfinance melempar exception. Itu tidak menutupi kasus yfinance
+    "berhasil" (tidak error) tapi datanya tertinggal beberapa hari --
+    padahal Binance mungkin sudah punya candle yang lebih baru. Sekarang
+    KEDUA sumber selalu dicoba saat yfinance tidak fresh, lalu dipilih
+    yang tanggal terakhirnya paling baru.
     """
+    today_utc = pd.Timestamp(datetime.utcnow().date())
+
+    def _clip_today(df):
+        return df[df.index < today_utc]
+
+    # ---- 1. Coba Yahoo Finance ----
     yf_error = None
+    df_yf = pd.DataFrame()
     try:
-        df = _fetch_price_yfinance(start)
-        today_utc = pd.Timestamp(datetime.utcnow().date())
-        df = df[df.index < today_utc]
-        if len(df) > 0:
-            return df, "yfinance", None
-        yf_error = "Yahoo Finance mengembalikan data tapi kosong setelah difilter."
+        df_yf = _clip_today(_fetch_price_yfinance(start))
+        if len(df_yf) == 0:
+            yf_error = "Yahoo Finance mengembalikan data tapi kosong setelah difilter."
     except Exception as e:
         yf_error = f"{type(e).__name__}: {e}"
 
-    # ---- Yahoo Finance gagal -> coba fallback Binance ----
+    yf_last  = df_yf.index.max() if len(df_yf) else None
+    yf_fresh = (yf_last is not None and
+                (today_utc - yf_last).days <= PRICE_FRESH_THRESHOLD_DAYS)
+
+    # Jalur cepat: yfinance sukses DAN datanya sudah segar -> tidak perlu
+    # repot-repot memanggil Binance sama sekali (hemat 1 request setiap
+    # kali cache di-refresh, dan ini kasus paling umum sehari-hari).
+    if yf_error is None and yf_fresh:
+        return df_yf, "yfinance", None
+
+    # ---- 2. yfinance gagal ATAU sukses-tapi-basi -> cek Binance juga ----
+    bn_error = None
+    df_bn = pd.DataFrame()
     try:
-        df = _fetch_price_binance(start)
-        today_utc = pd.Timestamp(datetime.utcnow().date())
-        df = df[df.index < today_utc]
-        if len(df) > 0:
+        df_bn = _clip_today(_fetch_price_binance(start))
+        if len(df_bn) == 0:
+            bn_error = "Binance tidak mengembalikan data."
+    except Exception as e2:
+        bn_error = f"{type(e2).__name__}: {e2}"
+
+    bn_last = df_bn.index.max() if len(df_bn) else None
+
+    # ---- 3. Pilih sumber dengan tanggal terakhir PALING BARU ----
+    binance_lebih_baru = (
+        bn_last is not None and (yf_last is None or bn_last > yf_last)
+    )
+    if binance_lebih_baru:
+        if yf_error is not None:
             reason = (f"Yahoo Finance gagal diakses ({yf_error}). Dashboard "
                       f"otomatis beralih memakai data dari Binance (klines "
                       f"harian BTCUSDT) sebagai sumber harga cadangan.")
-            return df, "binance", reason
-    except Exception as e2:
-        binance_error = f"{type(e2).__name__}: {e2}"
-        fatal_reason = (
-            f"Gagal mengambil data harga dari KEDUA sumber. "
-            f"Yahoo Finance: {yf_error}. Binance (fallback): {binance_error}."
-        )
-        return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
+        else:
+            reason = (f"Yahoo Finance berhasil diakses tapi datanya "
+                      f"tertinggal (candle terakhir {yf_last.strftime('%d %b %Y')}), "
+                      f"sedangkan Binance sudah punya candle lebih baru "
+                      f"({bn_last.strftime('%d %b %Y')}). Dashboard otomatis "
+                      f"beralih memakai Binance karena lebih up-to-date.")
+        return df_bn, "binance", reason
 
-    fatal_reason = f"Yahoo Finance gagal ({yf_error}) dan Binance tidak mengembalikan data."
+    # ---- 4. Binance tidak membantu (gagal, atau tidak lebih baru) ----
+    # Tetap pakai yfinance kalau datanya ada, walau mungkin masih basi --
+    # staleness itu sendiri sudah dijelaskan lewat warning terpisah di
+    # halaman Prediksi (warn-box "Harga acuan belum ter-update ke hari
+    # ini"), jadi tidak perlu fallback_reason tambahan di sini.
+    if yf_last is not None:
+        return df_yf, "yfinance", None
+
+    # ---- 5. Kedua sumber gagal total ----
+    fatal_reason = (
+        f"Gagal mengambil data harga dari KEDUA sumber. "
+        f"Yahoo Finance: {yf_error}. Binance (fallback): {bn_error}."
+    )
     return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
 
 @st.cache_data(ttl=3600)

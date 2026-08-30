@@ -1180,7 +1180,7 @@ if price_source in PRICE_SOURCE_LABELS and price_fallback_reason:
     {price_fallback_reason}
     <br><br>
     <span style='font-size:12px;'>
-    harga BTC-USD tetap live, hanya
+    Harga BTC-USD tetap live, hanya
     diambil dari penyedia berbeda.
     </span>
     </div>

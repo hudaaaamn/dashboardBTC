@@ -598,62 +598,99 @@ def _fetch_price_yfinance(start):
     return df
 
 
-def _fetch_price_coingecko(start):
+def _fetch_price_binance(start):
     """
-    Sumber fallback #2 jika Yahoo Finance gagal ATAU basi: CoinGecko
-    market_chart/range (harga harian BTC dalam USD).
+    Sumber fallback #2 jika Yahoo Finance gagal/basi: klines harian
+    BTCUSDT dari Binance public API (tanpa API key, tanpa rate-limit
+    ketat). Dipaginasi 1000 candle/request karena limit Binance per-request.
 
-    KENAPA COINGECKO, BUKAN BINANCE:
-    Percobaan sebelumnya memakai Binance klines, tapi Binance memblokir
-    traffic dari IP Amerika Serikat untuk kepatuhan regulasi (error 451
-    "restricted location" -- lihat https://www.binance.com/en/terms).
-    Streamlit Community Cloud umumnya menjalankan aplikasi dari server
-    di region AS, sehingga panggilan ke Binance API bisa gagal DIAM-DIAM
-    (exception ditangkap, tidak fatal) tanpa ada hubungannya dengan
-    fresh/tidaknya data -- membuat fallback terlihat "tidak jalan" padahal
-    sebenarnya sudah dicoba tapi diblokir di level jaringan. CoinGecko
-    tidak memberlakukan pembatasan geografis seperti ini untuk endpoint
-    publiknya, sehingga jauh lebih aman dipakai dari server cloud mana pun.
-
-    Catatan: model hanya memakai kolom 'close' (lihat
-    build_features_and_predict -> df = df_p[["close"]]), jadi CoinGecko
-    yang hanya menyediakan satu harga per titik waktu (bukan OHLC penuh
-    seperti Yahoo Finance) sudah cukup. Kolom open/high/low diisi sama
-    dengan close sekadar supaya bentuk dataframe konsisten -- tidak
-    dipakai di mana pun dalam pipeline model/prediksi.
-
+    CATATAN PENTING: api.binance.com melakukan geo-block (HTTP 451)
+    untuk IP yang berasal dari Amerika Serikat -- termasuk banyak IP
+    milik platform hosting cloud (mis. Streamlit Community Cloud yang
+    umum di-hosting di infrastruktur AS/GCP). Jadi di lingkungan
+    produksi, sumber ini WAJAR gagal terus meskipun berhasil di
+    komputer lokal. Itu sebabnya ada _fetch_price_coingecko() sebagai
+    cadangan tambahan yang tidak melakukan geo-block seperti ini.
     Bisa melempar exception -- ditangkap oleh caller.
     """
-    start_ts = int(pd.Timestamp(start).timestamp())
-    end_ts   = int(pd.Timestamp.utcnow().timestamp())
+    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
+    end_ms   = int(pd.Timestamp.utcnow().timestamp() * 1000)
+    rows = []
+    cursor = start_ms
+    while cursor < end_ms:
+        r = requests.get(
+            "https://api.binance.com/api/v3/klines",
+            params={
+                "symbol": "BTCUSDT",
+                "interval": "1d",
+                "startTime": cursor,
+                "limit": 1000,
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        rows.extend(batch)
+        last_open_time = batch[-1][0]
+        if last_open_time <= cursor:  # jaga-jaga supaya tidak infinite loop
+            break
+        cursor = last_open_time + 1
+        if len(batch) < 1000:
+            break
+
+    if not rows:
+        raise ValueError("Binance tidak mengembalikan satu candle pun")
+
+    df = pd.DataFrame(rows, columns=[
+        "open_time","open","high","low","close","volume","close_time",
+        "quote_asset_volume","n_trades","taker_buy_base","taker_buy_quote","ignore",
+    ])
+    df["date"] = pd.to_datetime(df["open_time"], unit="ms")
+    for c in ["open","high","low","close","volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df[["date","open","high","low","close","volume"]].set_index("date")
+    df = df[~df.index.duplicated(keep="first")].sort_index().dropna()
+    return df
+
+
+def _fetch_price_coingecko(start):
+    """
+    Sumber fallback #3: CoinGecko public API (tanpa API key).
+
+    Ditambahkan karena Binance (_fetch_price_binance) sering gagal di
+    lingkungan hosting cloud berbasis AS akibat geo-block HTTP 451 dari
+    api.binance.com -- CoinGecko tidak melakukan pembatasan semacam itu,
+    sehingga jadi cadangan yang jauh lebih andal saat dashboard di-deploy
+    (mis. di Streamlit Community Cloud), bukan hanya dijalankan lokal.
+
+    Catatan: endpoint publik gratis CoinGecko hanya memberi harga
+    penutupan (close) harian, bukan OHLC penuh -- kolom open/high/low
+    diisi sama dengan close sebagai placeholder struktural (tidak
+    dipakai untuk fitur volatilitas intraday apa pun di pipeline ini).
+    Bisa melempar exception -- ditangkap oleh caller.
+    """
+    days = (pd.Timestamp.utcnow().normalize() - pd.Timestamp(start)).days + 2
+    days = min(max(days, 2), 365)  # granularitas harian gratis dibatasi ~365 hari
     r = requests.get(
-        "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range",
-        params={"vs_currency": "usd", "from": start_ts, "to": end_ts},
-        timeout=30,
+        "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
+        params={"vs_currency": "usd", "days": days, "interval": "daily"},
+        timeout=20,
     )
     r.raise_for_status()
-    payload = r.json()
-    prices  = payload.get("prices", [])
-    volumes = payload.get("total_volumes", [])
+    prices = r.json().get("prices", [])
     if not prices:
         raise ValueError("CoinGecko tidak mengembalikan data harga")
 
-    df_price = pd.DataFrame(prices, columns=["ts", "close"])
-    df_price["date"] = pd.to_datetime(df_price["ts"], unit="ms").dt.normalize()
-    s_price = df_price.groupby("date")["close"].last()
-
-    df_vol = pd.DataFrame(volumes, columns=["ts", "volume"]) if volumes else pd.DataFrame(columns=["ts","volume"])
-    if len(df_vol):
-        df_vol["date"] = pd.to_datetime(df_vol["ts"], unit="ms").dt.normalize()
-        s_vol = df_vol.groupby("date")["volume"].last()
-    else:
-        s_vol = pd.Series(dtype=float)
-
-    df = pd.concat([s_price, s_vol.rename("volume")], axis=1)
-    df["open"] = df["close"]
-    df["high"] = df["close"]
-    df["low"]  = df["close"]
-    df = df[["open","high","low","close","volume"]].sort_index().dropna(subset=["close"])
+    df = pd.DataFrame(prices, columns=["ts", "close"])
+    df["date"] = pd.to_datetime(df["ts"], unit="ms").dt.normalize()
+    df = df.groupby("date", as_index=True)["close"].last().to_frame()
+    df["open"], df["high"], df["low"] = df["close"], df["close"], df["close"]
+    df["volume"] = np.nan
+    df = df[["open","high","low","close","volume"]].dropna(subset=["close"])
+    if len(df) == 0:
+        raise ValueError("CoinGecko merespons tapi tidak ada baris valid setelah diproses")
     return df
 
 
@@ -671,93 +708,117 @@ def fetch_price(start="2021-01-01"):
     """
     Return: (df, source, fallback_reason)
         df              : dataframe harga OHLCV (kosong jika gagal total)
-        source          : "yfinance" atau "binance" -- SIAPA PUN yang
-                           datanya paling baru pada saat fetch ini
+        source          : "yfinance", "binance", atau "coingecko" -- SIAPA
+                           PUN yang datanya paling baru pada saat fetch ini
                            dijalankan, bukan otomatis yfinance jika dia
                            tidak melempar error. None jika gagal total.
-        fallback_reason : None jika yfinance dipilih DAN datanya sudah
-                          segar (tidak perlu penjelasan apa pun ke user).
-                          Berisi keterangan jika:
-                          - Binance dipilih (baik karena yfinance error,
-                            ATAU karena yfinance sukses tapi datanya lebih
-                            basi dibanding Binance).
-                          - Kedua sumber gagal total (fatal).
+        fallback_reason : None HANYA jika yfinance dipilih lewat jalur
+                          cepat (sukses DAN sudah segar) -- tidak perlu
+                          penjelasan apa pun ke user. Di SEMUA kasus lain
+                          (termasuk saat tetap memakai yfinance karena
+                          cadangan tidak membantu) field ini SELALU diisi
+                          dengan alasan teknis, termasuk pesan error asli
+                          dari sumber yang gagal, supaya kegagalan sumber
+                          cadangan tidak pernah "hilang diam-diam" dari UI.
 
-    Catatan desain: sebelumnya fallback ke Binance HANYA terjadi kalau
-    yfinance melempar exception. Itu tidak menutupi kasus yfinance
-    "berhasil" (tidak error) tapi datanya tertinggal beberapa hari --
-    padahal Binance mungkin sudah punya candle yang lebih baru. Sekarang
-    KEDUA sumber selalu dicoba saat yfinance tidak fresh, lalu dipilih
-    yang tanggal terakhirnya paling baru.
+    Alur (urutan proses, bukan hasil akhir langsung):
+      1. Fetch yfinance dulu. Kalau BERHASIL dan datanya SEGAR -> langsung
+         dipakai, tidak perlu memanggil sumber lain sama sekali (hemat
+         request setiap cache di-refresh).
+      2. Kalau yfinance gagal ATAU sukses-tapi-basi -> baru fetch SEMUA
+         sumber cadangan (Binance, CoinGecko) sekaligus.
+      3. Bandingkan tanggal candle TERAKHIR di antara semua sumber yang
+         berhasil (termasuk yfinance) -> pakai yang paling baru.
+      4. Kalau tidak ada satu pun cadangan yang berhasil DAN lebih baru
+         dari yfinance -> tetap pakai yfinance, tapi jelaskan di
+         fallback_reason kenapa cadangan tidak dipakai (gagal, atau
+         berhasil tapi tidak lebih baru).
+      5. Kalau yfinance gagal total DAN semua cadangan juga gagal total
+         -> baru dianggap gagal fatal (df kosong, source None).
     """
     today_utc = pd.Timestamp(datetime.utcnow().date())
 
     def _clip_today(df):
         return df[df.index < today_utc]
 
-    # ---- 1. Coba Yahoo Finance ----
-    yf_error = None
-    df_yf = pd.DataFrame()
-    try:
-        df_yf = _clip_today(_fetch_price_yfinance(start))
-        if len(df_yf) == 0:
-            yf_error = "Yahoo Finance mengembalikan data tapi kosong setelah difilter."
-    except Exception as e:
-        yf_error = f"{type(e).__name__}: {e}"
+    def _try(name, fn):
+        try:
+            df = _clip_today(fn(start))
+            if len(df) == 0:
+                return df, f"{name}: mengembalikan data tapi kosong setelah difilter."
+            return df, None
+        except Exception as e:
+            return pd.DataFrame(), f"{name}: {type(e).__name__}: {e}"
 
+    # ---- 1. Jalur cepat: coba Yahoo Finance dulu ----
+    df_yf, yf_error = _try("Yahoo Finance", _fetch_price_yfinance)
     yf_last  = df_yf.index.max() if len(df_yf) else None
     yf_fresh = (yf_last is not None and
                 (today_utc - yf_last).days <= PRICE_FRESH_THRESHOLD_DAYS)
 
-    # Jalur cepat: yfinance sukses DAN datanya sudah segar -> tidak perlu
-    # repot-repot memanggil Binance sama sekali (hemat 1 request setiap
-    # kali cache di-refresh, dan ini kasus paling umum sehari-hari).
     if yf_error is None and yf_fresh:
         return df_yf, "yfinance", None
 
-    # ---- 2. yfinance gagal ATAU sukses-tapi-basi -> cek Binance juga ----
-    bn_error = None
-    df_bn = pd.DataFrame()
-    try:
-        df_bn = _clip_today(_fetch_price_binance(start))
-        if len(df_bn) == 0:
-            bn_error = "Binance tidak mengembalikan data."
-    except Exception as e2:
-        bn_error = f"{type(e2).__name__}: {e2}"
+    # ---- 2. yfinance gagal ATAU sukses-tapi-basi -> coba SEMUA cadangan ----
+    df_bn, bn_error = _try("Binance", _fetch_price_binance)
+    df_cg, cg_error = _try("CoinGecko", _fetch_price_coingecko)
 
-    bn_last = df_bn.index.max() if len(df_bn) else None
+    candidates = {
+        "yfinance":  (df_yf, yf_last),
+        "binance":   (df_bn, df_bn.index.max() if len(df_bn) else None),
+        "coingecko": (df_cg, df_cg.index.max() if len(df_cg) else None),
+    }
+    errors = {"yfinance": yf_error, "binance": bn_error, "coingecko": cg_error}
 
-    # ---- 3. Pilih sumber dengan tanggal terakhir PALING BARU ----
-    binance_lebih_baru = (
-        bn_last is not None and (yf_last is None or bn_last > yf_last)
+    # ---- 3. Pilih sumber dengan candle terakhir PALING BARU ----
+    valid = {k: v for k, v in candidates.items() if v[1] is not None}
+
+    # ---- 5. Semua sumber gagal total (fatal) ----
+    if not valid:
+        fatal_reason = (
+            f"Gagal mengambil data harga dari SEMUA sumber yang dicoba. "
+            f"Yahoo Finance: {yf_error}. Binance: {bn_error}. "
+            f"CoinGecko: {cg_error}."
+        )
+        return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
+
+    best_name = max(valid, key=lambda k: valid[k][1])
+    best_df, best_last = valid[best_name]
+
+    # ---- 4. Tidak ada cadangan yang lebih baru dari yfinance ----
+    if best_name == "yfinance":
+        reason = (
+            f"Yahoo Finance dipakai apa adanya (candle terakhir "
+            f"{yf_last.strftime('%d %b %Y') if yf_last else '-'}"
+            f"{', gagal awalnya karena: ' + yf_error if yf_error else ''}). "
+            f"Sumber cadangan sudah dicoba tapi tidak membantu -- "
+            f"Binance: {bn_error or 'berhasil tapi candle terakhirnya tidak lebih baru dari Yahoo Finance'}; "
+            f"CoinGecko: {cg_error or 'berhasil tapi candle terakhirnya tidak lebih baru dari Yahoo Finance'}."
+        )
+        return best_df, "yfinance", reason
+
+    # ---- Binance atau CoinGecko terbukti lebih baru -> beralih ----
+    reason_parts = []
+    if yf_error:
+        reason_parts.append(f"Yahoo Finance gagal diakses ({yf_error}).")
+    else:
+        reason_parts.append(
+            f"Yahoo Finance berhasil diakses tapi datanya tertinggal "
+            f"(candle terakhir {yf_last.strftime('%d %b %Y')})."
+        )
+    best_label = "Binance" if best_name == "binance" else "CoinGecko"
+    reason_parts.append(
+        f"Dashboard otomatis beralih memakai data dari {best_label} "
+        f"karena candle terakhirnya lebih baru "
+        f"({best_last.strftime('%d %b %Y')})."
     )
-    if binance_lebih_baru:
-        if yf_error is not None:
-            reason = (f"Yahoo Finance gagal diakses ({yf_error}). Dashboard "
-                      f"otomatis beralih memakai data dari Binance (klines "
-                      f"harian BTCUSDT) sebagai sumber harga cadangan.")
-        else:
-            reason = (f"Yahoo Finance berhasil diakses tapi datanya "
-                      f"tertinggal (candle terakhir {yf_last.strftime('%d %b %Y')}), "
-                      f"sedangkan Binance sudah punya candle lebih baru "
-                      f"({bn_last.strftime('%d %b %Y')}). Dashboard otomatis "
-                      f"beralih memakai Binance karena lebih up-to-date.")
-        return df_bn, "binance", reason
+    other_name = "coingecko" if best_name == "binance" else "binance"
+    other_err  = errors[other_name]
+    if other_err:
+        other_label = "CoinGecko" if other_name == "coingecko" else "Binance"
+        reason_parts.append(f"({other_label} juga dicoba namun gagal: {other_err}.)")
 
-    # ---- 4. Binance tidak membantu (gagal, atau tidak lebih baru) ----
-    # Tetap pakai yfinance kalau datanya ada, walau mungkin masih basi --
-    # staleness itu sendiri sudah dijelaskan lewat warning terpisah di
-    # halaman Prediksi (warn-box "Harga acuan belum ter-update ke hari
-    # ini"), jadi tidak perlu fallback_reason tambahan di sini.
-    if yf_last is not None:
-        return df_yf, "yfinance", None
-
-    # ---- 5. Kedua sumber gagal total ----
-    fatal_reason = (
-        f"Gagal mengambil data harga dari KEDUA sumber. "
-        f"Yahoo Finance: {yf_error}. Binance (fallback): {bn_error}."
-    )
-    return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
+    return best_df, best_name, " ".join(reason_parts)
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
@@ -893,10 +954,10 @@ def build_features_and_predict():
     # Fetch semua data
     df_p, price_source, price_fallback_reason = fetch_price()
     if price_source is None or len(df_p) == 0:
-        # Harga WAJIB tersedia dari salah satu sumber (yfinance ATAU
-        # Binance). Jika keduanya gagal, baru pipeline dihentikan di sini
-        # -- logic model itu sendiri tidak berubah, hanya jumlah sumber
-        # yang dicoba sebelum benar-benar menyerah.
+        # Harga WAJIB tersedia dari salah satu sumber (yfinance, Binance,
+        # ATAU CoinGecko). Jika ketiganya gagal, baru pipeline dihentikan
+        # di sini -- logic model itu sendiri tidak berubah, hanya jumlah
+        # sumber yang dicoba sebelum benar-benar menyerah.
         raise RuntimeError(
             price_fallback_reason or
             "Data harga BTC kosong dari semua sumber yang dicoba."
@@ -1119,20 +1180,20 @@ with st.spinner("Memuat data dan menjalankan model..."):
     except Exception as e:
         DATA_OK = False
         # ---- Fallback literasi untuk kegagalan FATAL (harga BTC gagal
-        # dari SEMUA sumber -- yfinance maupun Binance) ----
+        # dari SEMUA sumber -- yfinance, Binance, maupun CoinGecko) ----
         st.markdown(f"""
         <div class='fallback-box'>
         {WARN_ICON}<b>Dashboard gagal memuat data harga Bitcoin.</b><br>
         Detail teknis: <code>{e}</code><br><br>
         <span style='font-size:12px;'>
-        Dashboard sudah mencoba dua sumber harga (Yahoo Finance, lalu
-        Binance sebagai cadangan) dan keduanya gagal diakses -- kemungkinan
-        ada gangguan koneksi jaringan dari server dashboard itu sendiri.
-        Data harga adalah satu-satunya sumber yang <b>wajib tersedia</b>
-        untuk menjalankan model, sehingga tidak ada nilai pengganti yang
-        dipakai di sini (berbeda dari data sentimen/on-chain yang punya
-        fallback nilai netral). Coba klik <b>Refresh Data</b> beberapa
-        saat lagi.
+        Dashboard sudah mencoba tiga sumber harga (Yahoo Finance, Binance,
+        lalu CoinGecko sebagai cadangan) dan semuanya gagal diakses --
+        kemungkinan ada gangguan koneksi jaringan dari server dashboard
+        itu sendiri. Data harga adalah satu-satunya sumber yang
+        <b>wajib tersedia</b> untuk menjalankan model, sehingga tidak ada
+        nilai pengganti yang dipakai di sini (berbeda dari data
+        sentimen/on-chain yang punya fallback nilai netral). Coba klik
+        <b>Refresh Data</b> beberapa saat lagi.
         </span>
         </div>
         """, unsafe_allow_html=True)
@@ -1152,45 +1213,41 @@ price_fallback_reason   = result.get("price_fallback_reason")
 sent_fallback_reason    = result.get("sent_fallback_reason")
 onchain_fallback_reason = result.get("onchain_fallback_reason")
 
-if price_source == "binance" and price_fallback_reason:
+# Label tampilan untuk sumber harga cadangan (dipakai di beberapa tempat)
+PRICE_SOURCE_LABELS = {"binance": "Binance", "coingecko": "CoinGecko"}
+
+if price_source in PRICE_SOURCE_LABELS and price_fallback_reason:
     # Ini BUKAN kegagalan -- harga tetap berhasil didapat, cuma dari
-    # sumber cadangan. Dipakai warn-box (amber), bukan fallback-box
-    # (merah), supaya tidak disalahartikan sebagai data yang hilang.
+    # sumber cadangan (Binance atau CoinGecko). Dipakai warn-box (amber),
+    # bukan fallback-box (merah), supaya tidak disalahartikan sebagai
+    # data yang hilang.
+    _src_label = PRICE_SOURCE_LABELS[price_source]
     st.markdown(f"""
     <div class='warn-box'>
-    {WARN_ICON}<b>Sumber harga beralih ke cadangan (Binance).</b><br>
+    {WARN_ICON}<b>Sumber harga beralih ke cadangan ({_src_label}).</b><br>
     {price_fallback_reason}
     <br><br>
     <span style='font-size:12px;'>
     Ini bukan berarti data hilang -- harga BTC-USD tetap live, hanya
     diambil dari penyedia berbeda. Sedikit selisih harga vs Yahoo Finance
-    mungkin muncul karena keduanya mengagregasi dari bursa yang berbeda.
+    mungkin muncul karena masing-masing mengagregasi dari bursa/sumber
+    yang berbeda.
     </span>
     </div>
     """, unsafe_allow_html=True)
-
-if sent_fallback_reason:
-    render_fallback_box(
-        "Data sentimen gagal diambil.",
-        sent_fallback_reason,
-        "Dampak: fitur sentimen pada prediksi memakai nilai netral (bukan "
-        "kondisi pasar riil hari ini), sehingga pengaruh sentimen terhadap "
-        "prediksi untuk sesi ini tidak aktif."
-    )
-
-if onchain_fallback_reason:
-    render_fallback_box(
-        "Data on-chain gagal diambil (live maupun fallback CSV).",
-        onchain_fallback_reason,
-        "Dampak: fitur exchange netflow pada prediksi memakai nilai 0 "
-        "(dianggap tidak ada pergerakan bursa), berbeda dari kondisi "
-        "'tertinggal N hari' biasa yang setidaknya masih pakai nilai historis riil."
-    )
+elif price_source == "yfinance" and price_fallback_reason:
+    # Kasus: yfinance tetap dipakai (cadangan tidak membantu), tapi
+    # tetap tampilkan alasan teknisnya (termasuk kalau Binance/CoinGecko
+    # gagal) supaya kegagalan sumber cadangan tidak hilang diam-diam --
+    # berguna untuk debugging kalau ternyata SEHARUSNYA bisa beralih.
+    with st.expander("ℹ️ Detail: kenapa harga tidak beralih ke sumber cadangan?"):
+        st.caption(price_fallback_reason)
 
 status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
-    if price_source == "binance":
-        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>Harga via Binance (fallback)</span>",
+    if price_source in PRICE_SOURCE_LABELS:
+        _src_label = PRICE_SOURCE_LABELS[price_source]
+        st.markdown(f"<span class='status-pill status-stale'><span class='dot'></span>Harga via {_src_label} (fallback)</span>",
                     unsafe_allow_html=True)
     elif is_price_fresh:
         st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga Up-to-date</span>",
@@ -1222,7 +1279,7 @@ with st.expander("Tentang dashboard ini"):
     st.markdown(f"""
     <div class='info-box' style='margin-top:0'>
     <b>Sumber data:</b><br>
-    • Harga: Yahoo Finance<br>
+    • Harga: Yahoo Finance (utama) → Binance → CoinGecko (cadangan, dipilih otomatis berdasar mana yang paling baru)<br>
     • Sentimen: Crypto Fear & Greed Index<br>
     • On-Chain: CoinMetrics<br><br>
     <b>Model yang berjalan live di dashboard ini:</b><br>
@@ -1234,11 +1291,12 @@ with st.expander("Tentang dashboard ini"):
     </span><br><br>
     <b>Apa yang terjadi jika sumber data gagal diambil?</b><br>
     <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-    • <b>Harga</b>: coba Yahoo Finance dulu, lalu Binance sebagai cadangan
-    jika Yahoo Finance gagal. Harga tetap wajib tersedia dari salah satu
-    keduanya -- jika kedua-duanya gagal, dashboard berhenti dan
-    menampilkan keterangan error, karena tidak ada nilai pengganti yang
-    wajar untuk harga.<br>
+    • <b>Harga</b>: coba Yahoo Finance dulu; jika gagal atau datanya
+    tertinggal, dashboard mencoba Binance dan CoinGecko sekaligus lalu
+    memakai yang candle terakhirnya paling baru. Harga tetap wajib
+    tersedia dari salah satu dari ketiganya -- jika ketiga-tiganya gagal,
+    dashboard berhenti dan menampilkan keterangan error, karena tidak ada
+    nilai pengganti yang wajar untuk harga.<br>
     • <b>Sentimen (Fear & Greed)</b>: jika API gagal diakses, dashboard tetap
     berjalan memakai nilai netral (polarity = 0) dan menampilkan banner
     merah di bagian atas halaman.<br>
@@ -1283,7 +1341,7 @@ with tab_pred:
             "netflow bursa (netflow = 0), bukan aktivitas on-chain riil."
         )
 
-    if not is_price_fresh:
+    if not is_price_fresh and price_source not in PRICE_SOURCE_LABELS:
         st.markdown(f"""
         <div class='warn-box'>
         {WARN_ICON}<b>Harga acuan belum ter-update ke hari ini.</b> Candle harian

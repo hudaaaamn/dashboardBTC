@@ -579,39 +579,118 @@ def render_fallback_box(judul: str, penjelasan: str, dampak: str):
 #      saja.
 # ============================================================
 
+def _fetch_price_yfinance(start):
+    """Sumber utama. Bisa melempar exception -- ditangkap oleh caller."""
+    import yfinance as yf
+    df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.reset_index()
+    date_col = "Date" if "Date" in df.columns else df.columns[0]
+    df["date"] = pd.to_datetime(df[date_col])
+    if df["date"].dt.tz is not None:
+        df["date"] = df["date"].dt.tz_localize(None)
+    df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
+    df.columns = ["open","high","low","close","volume"]
+    df = df.dropna()
+    if len(df) == 0:
+        raise ValueError("Yahoo Finance merespons tapi tidak mengembalikan satu baris pun")
+    return df
+
+
+def _fetch_price_binance(start):
+    """
+    Sumber fallback #2 jika Yahoo Finance gagal: klines harian BTCUSDT
+    dari Binance public API (tanpa API key, tanpa rate-limit ketat).
+    Dipaginasi 1000 candle/request karena limit Binance per-request.
+    Bisa melempar exception -- ditangkap oleh caller.
+    """
+    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
+    end_ms   = int(pd.Timestamp.utcnow().timestamp() * 1000)
+    rows = []
+    cursor = start_ms
+    while cursor < end_ms:
+        r = requests.get(
+            "https://api.binance.com/api/v3/klines",
+            params={
+                "symbol": "BTCUSDT",
+                "interval": "1d",
+                "startTime": cursor,
+                "limit": 1000,
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        rows.extend(batch)
+        last_open_time = batch[-1][0]
+        if last_open_time <= cursor:  # jaga-jaga supaya tidak infinite loop
+            break
+        cursor = last_open_time + 1
+        if len(batch) < 1000:
+            break
+
+    if not rows:
+        raise ValueError("Binance tidak mengembalikan satu candle pun")
+
+    df = pd.DataFrame(rows, columns=[
+        "open_time","open","high","low","close","volume","close_time",
+        "quote_asset_volume","n_trades","taker_buy_base","taker_buy_quote","ignore",
+    ])
+    df["date"] = pd.to_datetime(df["open_time"], unit="ms")
+    for c in ["open","high","low","close","volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df[["date","open","high","low","close","volume"]].set_index("date")
+    df = df[~df.index.duplicated(keep="first")].sort_index().dropna()
+    return df
+
+
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     """
-    Return: (df, fallback_reason)
+    Return: (df, source, fallback_reason)
         df              : dataframe harga OHLCV (kosong jika gagal total)
-        fallback_reason : None jika sukses, atau string penjelasan error
-                          jika Yahoo Finance gagal diakses sama sekali.
+        source          : "yfinance" atau "binance" jika sukses, None jika
+                           gagal total (tidak ada sumber yang berhasil)
+        fallback_reason : None jika sukses lewat sumber utama (yfinance).
+                          Jika yfinance gagal tapi Binance berhasil, berisi
+                          keterangan singkat (bukan error fatal, sekadar
+                          info sumber berganti). Jika KEDUA sumber gagal,
+                          berisi penjelasan error fatal.
     """
+    yf_error = None
     try:
-        import yfinance as yf
-        df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.reset_index()
-        date_col = "Date" if "Date" in df.columns else df.columns[0]
-        df["date"] = pd.to_datetime(df[date_col])
-        if df["date"].dt.tz is not None:
-            df["date"] = df["date"].dt.tz_localize(None)
-        df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
-        df.columns = ["open","high","low","close","volume"]
-        df = df.dropna()
-
+        df = _fetch_price_yfinance(start)
         today_utc = pd.Timestamp(datetime.utcnow().date())
         df = df[df.index < today_utc]
-
-        if len(df) == 0:
-            return df, ("Yahoo Finance merespons tapi tidak mengembalikan "
-                         "satu baris data harga BTC-USD pun.")
-        return df, None
+        if len(df) > 0:
+            return df, "yfinance", None
+        yf_error = "Yahoo Finance mengembalikan data tapi kosong setelah difilter."
     except Exception as e:
-        return pd.DataFrame(columns=["open","high","low","close","volume"]), (
-            f"Gagal mengambil data harga dari Yahoo Finance ({type(e).__name__}: {e})."
+        yf_error = f"{type(e).__name__}: {e}"
+
+    # ---- Yahoo Finance gagal -> coba fallback Binance ----
+    try:
+        df = _fetch_price_binance(start)
+        today_utc = pd.Timestamp(datetime.utcnow().date())
+        df = df[df.index < today_utc]
+        if len(df) > 0:
+            reason = (f"Yahoo Finance gagal diakses ({yf_error}). Dashboard "
+                      f"otomatis beralih memakai data dari Binance (klines "
+                      f"harian BTCUSDT) sebagai sumber harga cadangan.")
+            return df, "binance", reason
+    except Exception as e2:
+        binance_error = f"{type(e2).__name__}: {e2}"
+        fatal_reason = (
+            f"Gagal mengambil data harga dari KEDUA sumber. "
+            f"Yahoo Finance: {yf_error}. Binance (fallback): {binance_error}."
         )
+        return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
+
+    fatal_reason = f"Yahoo Finance gagal ({yf_error}) dan Binance tidak mengembalikan data."
+    return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
@@ -745,14 +824,15 @@ def build_features_and_predict():
     import xgboost as xgb
 
     # Fetch semua data
-    df_p, price_fallback_reason = fetch_price()
-    if price_fallback_reason is not None or len(df_p) == 0:
-        # Harga adalah data WAJIB (tidak ada fallback nilai pengganti yang
-        # masuk akal untuk harga BTC) -- logic pipeline tetap dihentikan
-        # di sini seperti semula, hanya pesannya dibuat jelas untuk user.
+    df_p, price_source, price_fallback_reason = fetch_price()
+    if price_source is None or len(df_p) == 0:
+        # Harga WAJIB tersedia dari salah satu sumber (yfinance ATAU
+        # Binance). Jika keduanya gagal, baru pipeline dihentikan di sini
+        # -- logic model itu sendiri tidak berubah, hanya jumlah sumber
+        # yang dicoba sebelum benar-benar menyerah.
         raise RuntimeError(
             price_fallback_reason or
-            "Data harga BTC kosong setelah diambil dari Yahoo Finance."
+            "Data harga BTC kosong dari semua sumber yang dicoba."
         )
 
     df_s, sent_is_live, sent_fallback_reason = fetch_sentiment()
@@ -890,6 +970,8 @@ def build_features_and_predict():
         "onchain_last_real_date": onchain_last_real_date,
         "onchain_staleness_days": onchain_staleness_days,
         # --- Tambahan untuk literasi fallback di lapisan UI ---
+        "price_source": price_source,
+        "price_fallback_reason": price_fallback_reason,
         "sent_fallback_reason": sent_fallback_reason,
         "onchain_fallback_reason": onchain_fallback_reason,
     }
@@ -963,26 +1045,27 @@ with st.spinner("Memuat data dan menjalankan model..."):
     try:
         result = build_features_and_predict()
         df_full = result["df"]
-        df_p, _price_fallback_reason_ui = fetch_price()
+        df_p, _price_source_ui, _price_fallback_reason_ui = fetch_price()
         df_s, sent_real, _sent_fallback_reason_ui = fetch_sentiment()
         df_o, onchain_live_flag, _onchain_fallback_reason_ui = fetch_onchain()
         DATA_OK = True
     except Exception as e:
         DATA_OK = False
         # ---- Fallback literasi untuk kegagalan FATAL (harga BTC gagal
-        # total, satu-satunya sumber yang tidak punya nilai pengganti) ----
+        # dari SEMUA sumber -- yfinance maupun Binance) ----
         st.markdown(f"""
         <div class='fallback-box'>
         {WARN_ICON}<b>Dashboard gagal memuat data harga Bitcoin.</b><br>
         Detail teknis: <code>{e}</code><br><br>
         <span style='font-size:12px;'>
-        Ini biasanya berarti Yahoo Finance (sumber data harga BTC-USD) sedang
-        tidak bisa diakses, atau ada gangguan koneksi jaringan dari server
-        dashboard. Data harga adalah satu-satunya sumber yang <b>wajib
-        tersedia</b> untuk menjalankan model, sehingga tidak ada nilai
-        pengganti yang dipakai di sini (berbeda dari data sentimen/on-chain
-        yang punya fallback nilai netral). Coba klik <b>Refresh Data</b>
-        beberapa saat lagi.
+        Dashboard sudah mencoba dua sumber harga (Yahoo Finance, lalu
+        Binance sebagai cadangan) dan keduanya gagal diakses -- kemungkinan
+        ada gangguan koneksi jaringan dari server dashboard itu sendiri.
+        Data harga adalah satu-satunya sumber yang <b>wajib tersedia</b>
+        untuk menjalankan model, sehingga tidak ada nilai pengganti yang
+        dipakai di sini (berbeda dari data sentimen/on-chain yang punya
+        fallback nilai netral). Coba klik <b>Refresh Data</b> beberapa
+        saat lagi.
         </span>
         </div>
         """, unsafe_allow_html=True)
@@ -997,8 +1080,27 @@ is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and
 
 # ---- Ambil alasan fallback (jika ada) untuk ditampilkan sebagai
 # banner literasi paling atas, sebelum status pill ----
+price_source            = result.get("price_source")
+price_fallback_reason   = result.get("price_fallback_reason")
 sent_fallback_reason    = result.get("sent_fallback_reason")
 onchain_fallback_reason = result.get("onchain_fallback_reason")
+
+if price_source == "binance" and price_fallback_reason:
+    # Ini BUKAN kegagalan -- harga tetap berhasil didapat, cuma dari
+    # sumber cadangan. Dipakai warn-box (amber), bukan fallback-box
+    # (merah), supaya tidak disalahartikan sebagai data yang hilang.
+    st.markdown(f"""
+    <div class='warn-box'>
+    {WARN_ICON}<b>Sumber harga beralih ke cadangan (Binance).</b><br>
+    {price_fallback_reason}
+    <br><br>
+    <span style='font-size:12px;'>
+    Ini bukan berarti data hilang -- harga BTC-USD tetap live, hanya
+    diambil dari penyedia berbeda. Sedikit selisih harga vs Yahoo Finance
+    mungkin muncul karena keduanya mengagregasi dari bursa yang berbeda.
+    </span>
+    </div>
+    """, unsafe_allow_html=True)
 
 if sent_fallback_reason:
     render_fallback_box(
@@ -1020,7 +1122,10 @@ if onchain_fallback_reason:
 
 status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
 with status_col0:
-    if is_price_fresh:
+    if price_source == "binance":
+        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>Harga via Binance (fallback)</span>",
+                    unsafe_allow_html=True)
+    elif is_price_fresh:
         st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga Up-to-date</span>",
                     unsafe_allow_html=True)
     else:
@@ -1062,9 +1167,11 @@ with st.expander("Tentang dashboard ini"):
     </span><br><br>
     <b>Apa yang terjadi jika sumber data gagal diambil?</b><br>
     <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-    • <b>Harga (Yahoo Finance)</b>: wajib tersedia. Jika gagal, dashboard
-    berhenti dan menampilkan keterangan error, karena tidak ada pengganti
-    yang wajar untuk data harga.<br>
+    • <b>Harga</b>: coba Yahoo Finance dulu, lalu Binance sebagai cadangan
+    jika Yahoo Finance gagal. Harga tetap wajib tersedia dari salah satu
+    keduanya -- jika kedua-duanya gagal, dashboard berhenti dan
+    menampilkan keterangan error, karena tidak ada nilai pengganti yang
+    wajar untuk harga.<br>
     • <b>Sentimen (Fear & Greed)</b>: jika API gagal diakses, dashboard tetap
     berjalan memakai nilai netral (polarity = 0) dan menampilkan banner
     merah di bagian atas halaman.<br>

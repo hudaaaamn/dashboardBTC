@@ -7,9 +7,9 @@
 #   streamlit run dashboard.py
 #
 # CATATAN REVISI (Opsi B — on-chain fallback):
-#   Sumber on-chain gratis (CoinMetrics Community CSV di GitHub) berhenti
-#   diperbarui sejak CoinMetrics merestrukturisasi tier Community Data-nya
-#   (~Mei 2026, lihat BAB I & Batasan Penelitian subbab 1.4). Dashboard ini
+#   Arsip CoinMetrics Community CSV yang diambil untuk penelitian ini
+#   mempunyai baris terakhir 24 Mei 2026. Kondisi arsip dapat berubah.
+#   Dashboard ini
 #   tetap bisa menghasilkan prediksi "hari ini
 #   untuk besok" karena timeline utama sekarang mengikuti data HARGA
 #   (selalu paling baru), sementara fitur on-chain di-forward-fill dari
@@ -25,15 +25,11 @@
 #   model pembanding (XGBoost, LightGBM, Random Forest, SVR, LSTM) TIDAK
 #   dilatih ulang di dalam dashboard — angkanya (results_data pada halaman
 #   "Komparasi Model") adalah hasil statis dari eksperimen komparasi yang
-#   dijalankan terpisah di notebook Google Colab (Step 1-16), pada test
-#   set n=387 (27 Apr 2025 - 18 Mei 2026, RUN_DATE_LOCK=2026-05-20), lalu
+#   dijalankan terpisah di notebook Google Colab (tabel final Step 14), pada
+#   373 tanggal uji bersama (11 Mei 2025 - 18 Mei 2026), lalu
 #   di-hardcode di sini sebagai referensi. Keputusan desain ini disengaja:
-#   (1) melatih 5 model tambahan (termasuk LSTM) pada setiap kunjungan
-#   akan membuat waktu muat dashboard jauh lebih lambat, (2) angka
-#   komparasi perlu tetap pada kondisi data on-chain "bersih" (belum
-#   forward-fill) seperti saat eksperimen skripsi dijalankan, sehingga
-#   tidak relevan untuk dihitung ulang dengan data live yang mungkin
-#   sudah forward-fill. Jika notebook eksperimen dijalankan ulang dengan
+#   Komparasi historis tersebut tidak mengukur akurasi saat fitur on-chain
+#   memakai forward-fill. Jika notebook eksperimen dijalankan ulang dengan
 #   data baru, angka pada results_data perlu diperbarui manual mengikuti
 #   hasil notebook tsb (lihat Tabel 4.1/4.2/4.3 BAB IV).
 #
@@ -74,7 +70,6 @@
 # ============================================================
 
 import streamlit as st
-from forward_fill_report import render_report
 import pandas as pd
 import numpy as np
 import requests
@@ -85,6 +80,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import warnings
+from pathlib import Path
 warnings.filterwarnings('ignore')
 
 # ============================================================
@@ -120,6 +116,11 @@ GRID = "#edf0f3"
 REGIME_COLORS = {0: RED, 1: TEXT_MUTE, 2: GREEN}
 REGIME_NAMES = {0: "Bear", 1: "Sideways", 2: "Bull"}
 WARN_ICON = "<span class='notice-icon' aria-hidden='true'>!</span>"
+MONTHS_ID = ("Januari", "Februari", "Maret", "April", "Mei", "Juni",
+             "Juli", "Agustus", "September", "Oktober", "November", "Desember")
+
+def format_date_id(value):
+    return f"{value.day} {MONTHS_ID[value.month - 1]} {value.year}"
 
 st.markdown(f"""
 <style>
@@ -398,7 +399,12 @@ def render_chart(fig, **kwargs):
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     import yfinance as yf
+    cache_dir = Path(__file__).resolve().parent / ".cache" / "yfinance"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    yf.set_tz_cache_location(str(cache_dir))
     df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
+    if df.empty:
+        raise RuntimeError("Yahoo Finance tidak mengembalikan data BTC-USD")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
@@ -437,10 +443,9 @@ def fetch_onchain(start="2021-01-01"):
     Prioritas:
     1. Jika COINMETRICS_API_KEY tersedia (st.secrets atau environment
        variable) -> pakai endpoint CoinMetrics Pro (live, harian).
-    2. Jika tidak -> fallback ke CSV Community gratis di GitHub. Sumber ini
-       kemungkinan besar TIDAK live lagi (CoinMetrics menghentikan
-       pembaruan sebagian metrik Community Data sejak ~Mei 2026), sehingga
-       datanya bisa berhenti di tanggal tertentu di masa lalu.
+    2. Jika tidak -> fallback ke CSV Community di GitHub. Kesegaran metrik
+       diperiksa dari nilai netflow tidak kosong yang benar-benar tersedia;
+       tanggal baris CSV terakhir dapat lebih baru daripada nilai netflow.
 
     Return: (df, is_live)
         df       : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
@@ -507,7 +512,9 @@ def build_features_and_predict():
     df = df.join(df_s[["polarity"]], how="left")
     df = df.join(df_o[["exchange_netflow"]], how="left")
 
-    onchain_last_real_date = df_o.index.max() if len(df_o) else None
+    onchain_last_csv_date = df_o.index.max() if len(df_o) else None
+    valid_netflow_dates = df_o["exchange_netflow"].dropna().index
+    onchain_last_real_date = valid_netflow_dates.max() if len(valid_netflow_dates) else None
     last_price_date = df_p.index.max()
     onchain_staleness_days = (
         (last_price_date - onchain_last_real_date).days
@@ -624,6 +631,7 @@ def build_features_and_predict():
         "conf_margin": conf_margin,
         "onchain_live": onchain_live,
         "onchain_last_real_date": onchain_last_real_date,
+        "onchain_last_csv_date": onchain_last_csv_date,
         "onchain_staleness_days": onchain_staleness_days,
     }
 
@@ -746,10 +754,10 @@ price_staleness_days = (pd.Timestamp(datetime.now().date()) - pd.Timestamp(price
 is_price_fresh = price_staleness_days <= 1
 
 onchain_stale_days = result["onchain_staleness_days"]
-is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and onchain_stale_days <= 1)
+is_onchain_fresh = onchain_stale_days is not None and onchain_stale_days <= 1
 
 price_status = "Harga up-to-date" if is_price_fresh else f"Harga tertinggal {price_staleness_days} hari"
-chain_status = "On-chain live" if is_onchain_fresh else f"On-chain tertinggal {onchain_stale_days} hari"
+chain_status = "On-chain terbaru" if is_onchain_fresh else f"On-chain tertinggal {onchain_stale_days} hari"
 st.markdown(f"""
 <div class='data-status' aria-label='Kesegaran data'>
     <span class='status-pill {"status-live" if is_price_fresh else "status-stale"}'>
@@ -831,20 +839,21 @@ with tab_pred:
 
     if not is_onchain_fresh:
         st.markdown(f"""
-        <details class='warn-box'><summary>On-chain memakai forward-fill sejak {result['onchain_last_real_date'].strftime('%d %b %Y')}. Baca batasan data.</summary>
-        <div class='notice-body'>{WARN_ICON}<b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
-        Community CSV) terakhir memiliki data riil pada
-        <b>{result['onchain_last_real_date'].strftime('%d %B %Y')}</b>
-        ({onchain_stale_days} hari lalu). Fitur netflow pada prediksi ini
-        menggunakan nilai historis terakhir yang tersedia (forward-fill),
-        sehingga tidak mencerminkan aktivitas bursa terkini. Fitur harga dan
-        sentimen tetap diperbarui real-time.
+        <details class='warn-box'><summary>Netflow memakai forward-fill setelah {format_date_id(result['onchain_last_real_date'])}. Baca batasan data.</summary>
+        <div class='notice-body'>{WARN_ICON}<b>Data on-chain tidak terkini.</b> Baris terakhir
+        arsip CSV yang diambil bertanggal
+        <b>{format_date_id(result['onchain_last_csv_date'])}</b>, tetapi nilai
+        netflow tidak kosong terakhir bertanggal
+        <b>{format_date_id(result['onchain_last_real_date'])}</b>
+        ({onchain_stale_days} hari dari harga acuan). Prediksi memakai nilai netflow
+        historis tersebut melalui forward-fill; nilainya tidak menggambarkan
+        aktivitas bursa setelah tanggal itu. Harga dan sentimen diambil kembali
+        saat pipeline dijalankan, jika sumbernya tersedia, dengan cache satu jam.
         <br><br>
         <span style='font-size:12px;color:{TEXT_DIM}'>
-        <b style='color:{AMBER}'>Batas bukti validasi:</b> eksperimen historis
-        terbaru belum membuktikan bahwa forward-fill aman atau setara dengan
-        data aktual. Hasil dan keterbatasannya tersedia di halaman "Komparasi Model" →
-        "Validasi Kuantitatif Strategi Forward-Fill" untuk detail.
+        <b style='color:{AMBER}'>Batasan penelitian:</b> hasil pengujian
+        historis tidak mengukur akurasi prediksi saat netflow diteruskan
+        dari data lama. Prediksi ini perlu dibaca dengan batasan tersebut.
         </span>
         </div></details>
         """, unsafe_allow_html=True)
@@ -968,8 +977,9 @@ with tab_pred:
         </div>
         <div class='market-item'>
             <div class='market-heading'><span>On-chain netflow</span><strong>{last_netflow:+,.0f} BTC</strong></div>
-            <p>{"Lebih banyak BTC keluar bursa → potensi akumulasi (bullish)" if last_netflow < 0
-                else "Lebih banyak BTC masuk bursa → potensi tekanan jual (bearish)"}</p>
+            <p>{"Arus keluar bersih dari bursa (outflow − inflow)" if last_netflow > 0
+                else "Arus masuk bersih ke bursa (outflow − inflow)" if last_netflow < 0
+                else "Arus masuk dan keluar bursa seimbang"}</p>
             <p style='color:{AMBER}'>{netflow_caption}</p>
         </div>
         <div class='market-item'>
@@ -1002,36 +1012,36 @@ with tab_comp:
     results_data = [
         {"No":1, "Model":"XGBoost",      "Peran":"Gradient boosting",
          "Sumber":"Notebook (offline)",
-         "MAE":1565, "RMSE":2093, "MAPE":1.68, "R2":0.9856, "DirAcc":49.4,
+         "MAE":1561, "RMSE":2085, "MAPE":1.68, "R2":0.9862, "DirAcc":49.6,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":2, "Model":"LightGBM",     "Peran":"Gradient boosting",
          "Sumber":"Notebook (offline)",
-         "MAE":1639, "RMSE":2191, "MAPE":1.77, "R2":0.9842, "DirAcc":47.5,
+         "MAE":1635, "RMSE":2182, "MAPE":1.77, "R2":0.9848, "DirAcc":48.3,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":3, "Model":"Random Forest","Peran":"Ensemble tree",
          "Sumber":"Notebook (offline)",
-         "MAE":1441, "RMSE":1974, "MAPE":1.56, "R2":0.9872, "DirAcc":48.6,
+         "MAE":1443, "RMSE":1972, "MAPE":1.57, "R2":0.9876, "DirAcc":48.5,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":4, "Model":"SVR",          "Peran":"Support vector",
          "Sumber":"Notebook (offline)",
-         "MAE":2147, "RMSE":3033, "MAPE":2.29, "R2":0.9697, "DirAcc":49.4,
+         "MAE":2138, "RMSE":3015, "MAPE":2.29, "R2":0.9711, "DirAcc":49.6,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":5, "Model":"LSTM",         "Peran":"Deep learning sekuensial",
          "Sumber":"Notebook (offline)",
-         "MAE":1461, "RMSE":1990, "MAPE":1.59, "R2":0.9874, "DirAcc":50.7,
+         "MAE":1434, "RMSE":1967, "MAPE":1.56, "R2":0.9877, "DirAcc":49.3,
          "Coverage":None, "AvgWidth":None, "PinballLo":None, "PinballHi":None},
         {"No":6, "Model":"Model Usulan", "Peran":"HMM + XGB Quantile + Conformal",
          "Sumber":"Notebook (offline)",
-         "MAE":1467, "RMSE":2003, "MAPE":1.59, "R2":0.9868, "DirAcc":53.7,
-         "Coverage":91.2, "AvgWidth":7245, "PinballLo":247.4, "PinballHi":235.2},
+         "MAE":1472, "RMSE":2000, "MAPE":1.59, "R2":0.9873, "DirAcc":53.6,
+         "Coverage":91.2, "AvgWidth":7209, "PinballLo":247.3, "PinballHi":233.8},
     ]
     df_res = pd.DataFrame(results_data)
 
     st.markdown(f"""
-    <details class='info-box'><summary>Referensi eksperimen statis · 387 data uji · 27 Apr 2025 – 18 Mei 2026</summary>
+    <details class='info-box'><summary>Referensi eksperimen statis · 373 tanggal uji bersama · 11 Mei 2025 – 18 Mei 2026</summary>
     <div class='notice-body'>
     Angka pada tabel dan grafik di bawah ini adalah hasil evaluasi pada
-    <b>test set n=387</b> (27 Apr 2025 &ndash; 18 Mei 2026), dijalankan pada
+    <b>373 tanggal uji yang sama</b> (11 Mei 2025 &ndash; 18 Mei 2026), dijalankan pada
     notebook eksperimen Google Colab dengan tanggal data dikunci
     <code>(RUN_DATE_LOCK=2026-05-20)</code> agar hasil dapat direproduksi.
     Semua model (baris 1&ndash;6) merupakan <b>referensi statis</b>
@@ -1069,47 +1079,42 @@ with tab_comp:
     with st.expander("Uji Signifikansi Statistik (paired bootstrap, N=5000, CI 95%)"):
         st.markdown("""
         Selisih MAE antar-model diuji signifikansinya karena ukuran test set
-        (387 baris) rentan terhadap noise. Perbandingan **Model Usulan vs.
+        (373 tanggal bersama) rentan terhadap noise. Perbandingan **Model Usulan vs.
         masing-masing model pembanding**:
 
         | Perbandingan | Selisih MAE | p-value | Kesimpulan |
         |---|---|---|---|
-        | vs XGBoost | −$97,7 | 0,0076 | **Signifikan** (Model Usulan lebih baik) |
-        | vs LightGBM | −$172,2 | <0,0001 | **Signifikan** (Model Usulan lebih baik) |
-        | vs SVR | −$679,5 | <0,0001 | **Signifikan** (Model Usulan lebih baik) |
-        | vs Random Forest | +$26,5 | 0,1844 | Tidak signifikan |
-        | vs LSTM | +$10,7 | 0,6772 | Tidak signifikan |
+        | vs XGBoost | −$89,2 | 0,0140 | Signifikan pada uji nominal |
+        | vs LightGBM | −$162,6 | <0,0002 | Signifikan pada uji nominal |
+        | vs SVR | −$666,3 | <0,0002 | Signifikan pada uji nominal |
+        | vs Random Forest | +$28,7 | 0,1668 | Tidak signifikan |
+        | vs LSTM | +$38,3 | 0,0816 | Tidak signifikan |
 
-        Model Usulan terbukti signifikan lebih akurat dari XGBoost, LightGBM,
-        dan SVR. Terhadap Random Forest dan LSTM, selisih MAE tidak terbukti
-        signifikan — dari sisi MAE murni, Model Usulan **kompetitif**, bukan
-        superior. Keunggulan Model Usulan terhadap keduanya terletak pada
-        Directional Accuracy yang lebih tinggi dan interval probabilistik
-        terkalibrasi (Coverage 91,2%) yang tidak dimiliki Random Forest
-        maupun LSTM.
+        Pada uji nominal, selisih MAE terhadap XGBoost, LightGBM, dan SVR
+        terdeteksi; selisih terhadap Random Forest dan LSTM tidak terdeteksi.
+        Ini adalah bootstrap biasa pada observasi harian berurutan, tanpa
+        koreksi uji berganda. Hasilnya bersifat eksploratif. Interval model
+        usulan memiliki coverage empiris 91,2% pada periode historis ini.
         """)
 
     with st.expander("Ablation Study (Kontribusi Regime HMM & Sentiment-Weighted Netflow)"):
         st.markdown("""
-        Dua varian model diuji terhadap Model Usulan FULL, dengan split dan
-        hyperparameter identik:
+        Ablasi memakai 387 baris uji awal, sedangkan Tabel 4.1 memakai 373
+        tanggal bersama untuk mengakomodasi jendela LSTM. Dua varian model
+        diuji terhadap Model Usulan FULL, dengan split dan hyperparameter identik:
 
         | Varian | MAE | Coverage | vs FULL |
         |---|---|---|---|
         | Model Usulan (FULL) | $1.467 | 91,2% | — |
         | Tanpa Regime (HMM) | $1.469 | 91,0% | Tidak signifikan (p 0,14–0,88 di semua metrik) |
-        | Netflow Mentah (tanpa bobot sentimen) | $1.490 | 89,4% | **Signifikan** lebih buruk (MAE p=0,047; Coverage p=0,02; PinballQ95 p<0,0001) |
+        | Netflow Mentah (tanpa bobot sentimen) | $1.490 | 89,4% | MAE dan coverage lebih buruk pada uji nominal; PinballQ95 justru lebih baik (p<0,0001) |
 
-        **Kesimpulan RQ2:** dari dua komponen usulan, hanya
-        *sentiment-weighted netflow* yang terbukti berkontribusi signifikan
-        secara statistik terhadap akurasi dan kalibrasi interval. Kontribusi
-        kuantitatif regime HMM tidak terbukti signifikan pada data uji ini,
-        meskipun regime HMM tetap bermanfaat secara konseptual sebagai
-        indikator kondisi pasar (lihat halaman "Analisis Data").
+        **Kesimpulan RQ2:** regime HMM belum menunjukkan kontribusi
+        signifikan pada data uji ini. Pembobotan sentimen memberi hasil
+        campuran: MAE dan coverage lebih baik pada uji nominal, tetapi
+        pinball loss kuantil atas lebih buruk. Hasil ini tidak menguji
+        kinerja live ketika netflow memakai forward-fill.
         """)
-
-    with st.expander("Validasi Kuantitatif Strategi Forward-Fill"):
-        render_report(st)
 
     st.markdown("<div class='section-label'>Visualisasi Metrik</div>",
                 unsafe_allow_html=True)
@@ -1322,10 +1327,11 @@ with tab_data:
     with col_n:
         st.markdown("<div class='section-label'>On-Chain — Exchange Netflow</div>",
                     unsafe_allow_html=True)
+        st.caption("Konvensi fitur penelitian: outflow − inflow; nilai positif berarti arus keluar bersih dari bursa.")
         if not is_onchain_fresh:
             st.warning(
                 f"Data on-chain historis terakhir: "
-                f"{result['onchain_last_real_date'].strftime('%d %b %Y')}. "
+                f"{format_date_id(result['onchain_last_real_date'])}. "
                 f"Bagian setelah tanggal ini adalah nilai forward-fill "
                 f"(bukan data riil baru)."
             )
@@ -1334,7 +1340,7 @@ with tab_data:
         fig_nf.add_trace(go.Bar(
             x=nf_view.index,
             y=nf_view["exchange_netflow"],
-            marker_color=[RED if v > 0 else GREEN
+            marker_color=[GREEN if v > 0 else RED if v < 0 else TEXT_MUTE
                           for v in nf_view["exchange_netflow"]],
             name="Netflow"
         ))
@@ -1393,8 +1399,9 @@ with tab_data:
     <b>Fitur Usulan — Sentiment-Weighted Netflow</b>: Netflow on-chain dikalikan
     dengan bobot sentimen <code>(1 + polarity)</code>. Ketika sentimen Extreme Fear
     (polarity = −1), bobot = 0 sehingga sinyal netflow dilemahkan. Ketika Extreme Greed
-    (polarity = +1), bobot = 2 sehingga sinyal diperkuat. Logika: perpindahan BTC ke
-    bursa saat panik berbeda maknanya dibanding perpindahan yang sama saat euforia.
+    (polarity = +1), bobot = 2 sehingga magnitudo fitur diperbesar. Ini
+    adalah transformasi fitur yang diuji melalui ablasi, bukan bukti bahwa
+    polaritas menentukan penyebab atau arah perpindahan BTC.
     </div>
     """, unsafe_allow_html=True)
 

@@ -1,0 +1,430 @@
+{
+  "protocol": "PROTOKOL.md",
+  "n_pairs": 704,
+  "n_unique_dates": 704,
+  "fresh": {
+    "n": 704,
+    "MAE": 1504.7137312041014,
+    "RMSE": 2085.609310219093,
+    "MAPE": 1.7615125431960255,
+    "coverage": 89.91477272727273,
+    "width": 7369.0359350563895
+  },
+  "stale": {
+    "n": 704,
+    "MAE": 1511.4441181732182,
+    "RMSE": 2093.4035501430076,
+    "MAPE": 1.7728239929435432,
+    "coverage": 90.3409090909091,
+    "width": 7334.5523259343345
+  },
+  "persistence_MAE": 1471.0384410511363,
+  "bootstrap": [
+    {
+      "block_days": 14,
+      "B": 10000,
+      "mean_delta_usd": 6.7303869691168074,
+      "slope_usd_per_day": 0.08932994057754198,
+      "mean_ci95": [
+        -12.596971593264044,
+        27.282279550225457
+      ],
+      "mean_p": 0.5041495850414959,
+      "slope_ci95": [
+        -0.6854219688749404,
+        0.8242052349003764
+      ],
+      "slope_p": 0.8196180381961804,
+      "mean_p_holm": 1.0,
+      "slope_p_holm": 1.0
+    },
+    {
+      "block_days": 7,
+      "B": 10000,
+      "mean_delta_usd": 6.7303869691168074,
+      "slope_usd_per_day": 0.08932994057754198,
+      "mean_ci95": [
+        -12.019208671300781,
+        26.84279509176124
+      ],
+      "mean_p": 0.49295070492950704,
+      "slope_ci95": [
+        -0.669241872387517,
+        0.850659876218532
+      ],
+      "slope_p": 0.8072192780721927,
+      "mean_p_holm": 0.9859014098590141,
+      "slope_p_holm": 0.9859014098590141
+    },
+    {
+      "block_days": 28,
+      "B": 10000,
+      "mean_delta_usd": 6.7303869691168074,
+      "slope_usd_per_day": 0.08932994057754198,
+      "mean_ci95": [
+        -12.696081162608284,
+        24.111102351536136
+      ],
+      "mean_p": 0.48025197480251974,
+      "slope_ci95": [
+        -0.6433946359749259,
+        0.8192811262606989
+      ],
+      "slope_p": 0.8144185581441856,
+      "mean_p_holm": 0.9605039496050395,
+      "slope_p_holm": 0.9605039496050395
+    }
+  ],
+  "folds": [
+    {
+      "fold": 1,
+      "cutoff": "2024-06-13",
+      "start": "2024-06-14",
+      "end": "2024-09-09",
+      "train_n": 1034,
+      "train_last_feature": "2023-11-30",
+      "cal_first_feature": "2023-12-02",
+      "cal_last_target": "2024-06-13",
+      "cal_n": 194,
+      "margin_return": 0.007942504615276381,
+      "hmm_last_loglik_delta": 0.008464778523375571,
+      "hmm_iterations": 107,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 1
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1281.9375130447918,
+        "RMSE": 1757.2576148039122,
+        "MAPE": 2.1176574003426056,
+        "coverage": 85.22727272727273,
+        "width": 5283.010626246507
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1278.4711945270776,
+        "RMSE": 1711.663300241015,
+        "MAPE": 2.114922153945177,
+        "coverage": 86.36363636363636,
+        "width": 5141.984409330127
+      },
+      "mean_delta_usd": -3.4663185177143365,
+      "persistence_MAE": 1258.7392578125
+    },
+    {
+      "fold": 2,
+      "cutoff": "2024-09-09",
+      "start": "2024-09-10",
+      "end": "2024-12-06",
+      "train_n": 1122,
+      "train_last_feature": "2024-02-26",
+      "cal_first_feature": "2024-02-28",
+      "cal_last_target": "2024-09-09",
+      "cal_n": 194,
+      "margin_return": 0.0073543478546233,
+      "hmm_last_loglik_delta": 0.006529582630719233,
+      "hmm_iterations": 76,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1411.7437846045411,
+        "RMSE": 2026.6000701933988,
+        "MAPE": 1.8443821844674888,
+        "coverage": 88.63636363636364,
+        "width": 6747.481440361258
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1463.085409470863,
+        "RMSE": 2084.192167224288,
+        "MAPE": 1.9077795699817681,
+        "coverage": 90.9090909090909,
+        "width": 6960.2631246455685
+      },
+      "mean_delta_usd": 51.341624866321744,
+      "persistence_MAE": 1367.4280894886363
+    },
+    {
+      "fold": 3,
+      "cutoff": "2024-12-06",
+      "start": "2024-12-07",
+      "end": "2025-03-04",
+      "train_n": 1210,
+      "train_last_feature": "2024-05-24",
+      "cal_first_feature": "2024-05-26",
+      "cal_last_target": "2024-12-06",
+      "cal_n": 194,
+      "margin_return": 0.008334976643377873,
+      "hmm_last_loglik_delta": 0.004386011761198461,
+      "hmm_iterations": 81,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1863.8060233939798,
+        "RMSE": 2569.836636128656,
+        "MAPE": 1.9263712971487446,
+        "coverage": 92.04545454545455,
+        "width": 9451.905265910116
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1854.5492159464366,
+        "RMSE": 2582.0050711109925,
+        "MAPE": 1.9146855621385466,
+        "coverage": 89.77272727272727,
+        "width": 9246.83526433327
+      },
+      "mean_delta_usd": -9.25680744754341,
+      "persistence_MAE": 1825.5439453125
+    },
+    {
+      "fold": 4,
+      "cutoff": "2025-03-04",
+      "start": "2025-03-05",
+      "end": "2025-05-31",
+      "train_n": 1298,
+      "train_last_feature": "2024-08-20",
+      "cal_first_feature": "2024-08-22",
+      "cal_last_target": "2025-03-04",
+      "cal_n": 194,
+      "margin_return": 0.0036485885368648385,
+      "hmm_last_loglik_delta": 0.0059974369605697575,
+      "hmm_iterations": 81,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1570.8636612775576,
+        "RMSE": 2154.679358247518,
+        "MAPE": 1.7497793102026755,
+        "coverage": 87.5,
+        "width": 7929.56200805227
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1575.6317325874857,
+        "RMSE": 2177.098786730386,
+        "MAPE": 1.7579061532033782,
+        "coverage": 87.5,
+        "width": 7930.304986814651
+      },
+      "mean_delta_usd": 4.768071309927936,
+      "persistence_MAE": 1575.5712890625
+    },
+    {
+      "fold": 5,
+      "cutoff": "2025-05-31",
+      "start": "2025-06-01",
+      "end": "2025-08-27",
+      "train_n": 1386,
+      "train_last_feature": "2024-11-16",
+      "cal_first_feature": "2024-11-18",
+      "cal_last_target": "2025-05-31",
+      "cal_n": 194,
+      "margin_return": 0.0068525844415073325,
+      "hmm_last_loglik_delta": 0.007013334343355382,
+      "hmm_iterations": 119,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1467.1770599887188,
+        "RMSE": 1966.3374258822987,
+        "MAPE": 1.30423721699874,
+        "coverage": 93.18181818181817,
+        "width": 7966.044011525825
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1433.6015752495996,
+        "RMSE": 1924.5839727010875,
+        "MAPE": 1.2752752257675777,
+        "coverage": 95.45454545454545,
+        "width": 8072.665773863322
+      },
+      "mean_delta_usd": -33.575484739119105,
+      "persistence_MAE": 1367.7370383522727
+    },
+    {
+      "fold": 6,
+      "cutoff": "2025-08-27",
+      "start": "2025-08-28",
+      "end": "2025-11-23",
+      "train_n": 1474,
+      "train_last_feature": "2025-02-12",
+      "cal_first_feature": "2025-02-14",
+      "cal_last_target": "2025-08-27",
+      "cal_n": 194,
+      "margin_return": 0.004809363078127564,
+      "hmm_last_loglik_delta": -0.0035201870450691786,
+      "hmm_iterations": 89,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1732.104189518892,
+        "RMSE": 2245.355471393341,
+        "MAPE": 1.6188520752452875,
+        "coverage": 92.04545454545455,
+        "width": 8315.564881919503
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1722.2638473607578,
+        "RMSE": 2226.2884645535432,
+        "MAPE": 1.6052351453331986,
+        "coverage": 89.77272727272727,
+        "width": 7987.627343753766
+      },
+      "mean_delta_usd": -9.84034215813418,
+      "persistence_MAE": 1711.1302379261363
+    },
+    {
+      "fold": 7,
+      "cutoff": "2025-11-23",
+      "start": "2025-11-24",
+      "end": "2026-02-19",
+      "train_n": 1562,
+      "train_last_feature": "2025-05-11",
+      "cal_first_feature": "2025-05-13",
+      "cal_last_target": "2025-11-23",
+      "cal_n": 194,
+      "margin_return": 0.0031699262923816987,
+      "hmm_last_loglik_delta": -0.053394293412566185,
+      "hmm_iterations": 86,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1476.582603338418,
+        "RMSE": 2224.824615048428,
+        "MAPE": 1.8232162350470802,
+        "coverage": 89.77272727272727,
+        "width": 6847.825131332607
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1495.1641286654049,
+        "RMSE": 2246.5113324035806,
+        "MAPE": 1.848500517094775,
+        "coverage": 90.9090909090909,
+        "width": 6801.89475111049
+      },
+      "mean_delta_usd": 18.581525326986924,
+      "persistence_MAE": 1462.4489524147727
+    },
+    {
+      "fold": 8,
+      "cutoff": "2026-02-19",
+      "start": "2026-02-20",
+      "end": "2026-05-18",
+      "train_n": 1650,
+      "train_last_feature": "2025-08-07",
+      "cal_first_feature": "2025-08-09",
+      "cal_last_target": "2026-02-19",
+      "cal_n": 194,
+      "margin_return": 0.008589454140015967,
+      "hmm_last_loglik_delta": 0.008196846012651804,
+      "hmm_iterations": 120,
+      "raw_crossings": {
+        "fresh": 0,
+        "stale": 0
+      },
+      "fresh": {
+        "n": 88,
+        "MAE": 1233.4950144659115,
+        "RMSE": 1580.6376192449886,
+        "MAPE": 1.7076046261155826,
+        "coverage": 90.9090909090909,
+        "width": 6410.894115103025
+      },
+      "stale": {
+        "n": 88,
+        "MAE": 1268.7858415781202,
+        "RMSE": 1634.4273829920278,
+        "MAPE": 1.7582876160839243,
+        "coverage": 92.04545454545455,
+        "width": 6534.842953623476
+      },
+      "mean_delta_usd": 35.29082711220888,
+      "persistence_MAE": 1199.7087180397727
+    }
+  ],
+  "checks": [
+    {
+      "fold": 1,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 2,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 3,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 4,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 5,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 6,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 7,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    },
+    {
+      "fold": 8,
+      "prefix_invariance": true,
+      "intervention_invariants": true,
+      "temporal_boundaries": true
+    }
+  ],
+  "versions": {
+    "numpy": "2.3.5",
+    "pandas": "3.0.1",
+    "scipy": "1.18.1",
+    "xgboost": "3.4.1",
+    "hmmlearn": "0.3.3",
+    "scikit-learn": "1.9.1"
+  },
+  "python": "3.12.14",
+  "sha256_script": "1279eb850320837e8b3b2da38d655b01f5663aeeb1debda69dfa9373bc614288",
+  "sha256_protocol": "83ec08609d649440fb200748a3307c8f4df2201466951e75be97088a2e368e66",
+  "sha256_predictions": "659bc40b5c8d8424135ceeb26c2be507e51a8aa5fbda622adbb5431b3b8b551a"
+}

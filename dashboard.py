@@ -1,12 +1,85 @@
 # ============================================================
 # dashboard.py — Dashboard Prediksi Probabilistik Harga Bitcoin
+# TA: Huda Muhammad Nur — UGM Sekolah Vokasi 2026
+#
+# Cara menjalankan:
+#   pip install -r requirements.txt
+#   streamlit run dashboard.py
+#
+# CATATAN REVISI (Opsi B — on-chain fallback):
+#   Sumber on-chain gratis (CoinMetrics Community CSV di GitHub) berhenti
+#   diperbarui sejak CoinMetrics merestrukturisasi tier Community Data-nya
+#   (~Mei 2026, lihat BAB I & Batasan Penelitian subbab 1.4). Dashboard ini
+#   tetap bisa menghasilkan prediksi "hari ini
+#   untuk besok" karena timeline utama sekarang mengikuti data HARGA
+#   (selalu paling baru), sementara fitur on-chain di-forward-fill dari
+#   nilai riil terakhir yang tersedia dan diberi badge transparansi.
+#   Begitu API key premium (mis. CoinMetrics Pro) tersedia, isi
+#   COINMETRICS_API_KEY di st.secrets / environment variable — fungsi
+#   fetch_onchain() otomatis beralih ke jalur live tanpa perlu ubah kode lain.
+#
+# CATATAN CAKUPAN MODEL (hanya Model Usulan yang berjalan live di sini):
+#   Dashboard ini HANYA melatih/menjalankan satu model secara live, yaitu
+#   Model Usulan (HMM Regime-Switching + XGBoost Quantile + Conformal
+#   Prediction) melalui build_features_and_predict() di bawah. Kelima
+#   model pembanding (XGBoost, LightGBM, Random Forest, SVR, LSTM) TIDAK
+#   dilatih ulang di dalam dashboard — angkanya (results_data pada halaman
+#   "Komparasi Model") adalah hasil statis dari eksperimen komparasi yang
+#   dijalankan terpisah di notebook Google Colab (Step 1-16), pada test
+#   set n=387 (27 Apr 2025 - 18 Mei 2026, RUN_DATE_LOCK=2026-05-20), lalu
+#   di-hardcode di sini sebagai referensi. Keputusan desain ini disengaja:
+#   (1) melatih 5 model tambahan (termasuk LSTM) pada setiap kunjungan
+#   akan membuat waktu muat dashboard jauh lebih lambat, (2) angka
+#   komparasi perlu tetap pada kondisi data on-chain "bersih" (belum
+#   forward-fill) seperti saat eksperimen skripsi dijalankan, sehingga
+#   tidak relevan untuk dihitung ulang dengan data live yang mungkin
+#   sudah forward-fill. Jika notebook eksperimen dijalankan ulang dengan
+#   data baru, angka pada results_data perlu diperbarui manual mengikuti
+#   hasil notebook tsb (lihat Tabel 4.1/4.2/4.3 BAB IV).
+#
+# CATATAN REDESIGN TAMPILAN (September 2026):
+#   Layout riset dengan ringkasan prediksi, grafik berfilter periode,
+#   pemberitahuan kesegaran data, dan tabel evaluasi responsif.
+#   Fungsi fetch, feature engineering, training, caching, serta angka
+#   komparasi eksperimen tetap sama. Filter grafik hanya mengubah tampilan.
+#
+# CATATAN TAMBAHAN (Agustus 2026 — kesegaran data HARGA):
+#   Ditambahkan badge kesegaran harga (mirip badge on-chain yang sudah
+#   ada) + tombol "Refresh Data" manual. Ini merespons kasus nyata: harga
+#   BTC-USD dari Yahoo Finance (via yfinance) kadang tampak "telat 1 hari"
+#   ketika dashboard dibuka pagi/siang WIB, karena candle harian crypto di
+#   Yahoo Finance sering final berdasarkan hari kalender US Eastern (jauh
+#   di belakang WIB/UTC+7), ditambah cache Streamlit (ttl=3600) yang baru
+#   dicek ulang saat ada kunjungan baru. Badge ini TIDAK mengubah logika
+#   pipeline/model sama sekali — murni lapisan transparansi + tombol untuk
+#   memaksa bypass cache tanpa menunggu ttl habis sendiri.
+#
+# CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka):
+#   Sebelumnya, setiap kali dashboard DIBUKA (termasuk kunjungan pertama
+#   seorang user), seluruh pipeline (fetch harga/sentimen/on-chain +
+#   build_features_and_predict) langsung berjalan otomatis. Ini membuat
+#   pengunjung pertama selalu menunggu proses training/prediksi walau
+#   mereka belum tentu butuh data ter-refresh saat itu juga.
+#   Revisi: dipakai st.session_state sebagai flag ("dashboard_started").
+#   Saat halaman pertama kali dibuka, tampil pengantar dan status sumber
+#   yang belum dimuat (belum ada fetch/model yang dijalankan).
+#   Pipeline (fetch_price,
+#   fetch_sentiment, fetch_onchain, build_features_and_predict, serta
+#   seluruh tab Prediksi/Komparasi Model/Analisis Data) baru dieksekusi
+#   setelah tombol "Muat & Jalankan Model" / "Refresh Data" ditekan.
+#   Tombol yang sama juga dipakai untuk me-refresh ulang (bypass cache
+#   1 jam) setelah dashboard pernah dijalankan sebelumnya di sesi ini.
+#   Tidak ada perubahan pada logika fetch/model/caching itu sendiri —
+#   perubahan murni pada KAPAN pipeline tsb dipanggil.
+# ============================================================
+
 import streamlit as st
+from forward_fill_report import render_report
 import pandas as pd
 import numpy as np
 import requests
 import io
 import os
-import urllib.parse
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -25,562 +98,305 @@ st.set_page_config(
 )
 
 # ============================================================
-# DESIGN TOKENS
+# PRESENTATION — restrained research workspace, Bitcoin orange.
+# Native Streamlit controls retain their keyboard and screen-reader support.
 # ============================================================
-BG        = "#f5f5f7"   
-SURFACE   = "#ffffff"   
-SURFACE_2 = "#f2f2f4"  
-BORDER    = "#d2d2d7"   
-TEXT      = "#1d1d1f"  
-TEXT_DIM  = "#6e6e73"  
-TEXT_MUTE = "#86868b"  
-ACCENT    = "#e8830f"   
-ACCENT_SOFT = "rgba(232,131,15,0.10)"
-TEAL      = "#0f9488"  
-TEAL_SOFT = "rgba(15,148,136,0.10)"
-GREEN     = "#1e8e3e"   
-RED       = "#d5372b"   
-AMBER     = "#b1740f"  
-GRID      = "#e5e5ea"
-
+BG = "#f7f8fa"
+SURFACE = "#ffffff"
+SURFACE_2 = "#eef0f3"
+BORDER = "#dfe3e8"
+TEXT = "#202730"
+TEXT_DIM = "#586473"
+TEXT_MUTE = "#637080"
+ACCENT = "#f8a138"
+ACCENT_SOFT = "rgba(248,161,56,0.14)"
+# Forecasts use the same product accent; red/green only encode market states.
+TEAL = ACCENT
+TEAL_SOFT = ACCENT_SOFT
+GREEN = "#287451"
+RED = "#b63e3e"
+AMBER = "#875b16"
+GRID = "#edf0f3"
 REGIME_COLORS = {0: RED, 1: TEXT_MUTE, 2: GREEN}
-REGIME_NAMES  = {0: "Bear", 1: "Sideways", 2: "Bull"}
+REGIME_NAMES = {0: "Bear", 1: "Sideways", 2: "Bull"}
+WARN_ICON = "<span class='notice-icon' aria-hidden='true'>!</span>"
 
-# ============================================================
-# IKON KUSTOM
-# ============================================================
-def _icon_svg(paths: str) -> str:
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-        'fill="none" stroke="white" stroke-width="2" '
-        'stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>'
-    )
-    return "data:image/svg+xml," + urllib.parse.quote(svg)
-
-# Tab "Prediksi"
-ICON_TREND  = _icon_svg(
-    '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>'
-    '<polyline points="17 6 23 6 23 12"/>'
-)
-# Tab "Komparasi Model"
-ICON_BARS   = _icon_svg(
-    '<path d="M3 3v18h18"/><path d="M18 17V9"/>'
-    '<path d="M13 17V5"/><path d="M8 17v-3"/>'
-)
-# Tab "Analisis Data" 
-ICON_SEARCH = _icon_svg(
-    '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'
-)
-# Expander "Tentang dashboard"
-ICON_INFO   = _icon_svg(
-    '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
-)
-
-# Ikon peringatan/disclaimer
-WARN_ICON = (
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
-    'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;'
-    'vertical-align:-2.5px;margin-right:6px;flex-shrink:0;">'
-    f'<circle cx="12" cy="12" r="9.4" stroke="{RED}" stroke-width="2.3"/>'
-    f'<rect x="10.6" y="6.2" width="2.8" height="7.8" rx="1.4" fill="{RED}"/>'
-    f'<circle cx="12" cy="17" r="1.6" fill="{RED}"/></svg>'
-)
-
-# ============================================================
-# CUSTOM CSS
-# ============================================================
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
 :root {{
-    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-                 "Inter", "Helvetica Neue", Arial, sans-serif;
+    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+    color-scheme: light;
 }}
-
-html, body, [class*="css"] {{
-    font-family: var(--font-sans);
-    background-color: {BG};
-    color: {TEXT};
-    -webkit-font-smoothing: antialiased;
-}}
-.stApp {{ background-color: {BG}; }}
-[data-testid="stHeader"] {{ background: transparent; }}
-h1, h2, h3, h4 {{ font-family: var(--font-sans); letter-spacing:-0.01em; }}
-p, span, div, label {{ font-family: var(--font-sans); }}
-code, .stMarkdown code {{ font-family: "SF Mono", "IBM Plex Mono", ui-monospace, monospace; font-size:0.92em; color: #ffffff;}}
-.tnum {{ font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
-
-/* Blok konten utama diberi lebar maksimum + padding lega, khas halaman produk Apple */
-.block-container {{ padding-top:1.4rem; padding-bottom:3rem; max-width:1180px; }}
-
-/* Sembunyikan sidebar bawaan — navigasi dipindah ke tab atas */
-[data-testid="stSidebar"] {{ display: none; }}
-[data-testid="collapsedControl"] {{ display: none; }}
-
-/* ---- Topbar (pengganti sidebar) — nav bar bersih ala apple.com ---- */
-.topbar {{
-    display:flex; align-items:center; justify-content:space-between;
-    gap:16px; flex-wrap:wrap;
-    background: rgba(255,255,255,0.82);
-    backdrop-filter: saturate(180%) blur(14px);
-    -webkit-backdrop-filter: saturate(180%) blur(14px);
-    border:1px solid {BORDER}; border-radius:18px;
-    padding:16px 26px; margin-bottom:16px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-}}
-.topbar-brand {{ display:flex; align-items:center; gap:14px; }}
-.topbar-coin {{
-    width:38px; height:38px; border-radius:50%;
-    background: {ACCENT};
-    display:flex; align-items:center; justify-content:center;
-    font-size:18px; font-weight:700; color:#ffffff;
-    flex-shrink:0;
-}}
-.topbar-title h1 {{
-    color:{TEXT}; font-size:19px; font-weight:700; margin:0; line-height:1.2;
-    letter-spacing:-0.015em;
-}}
-.topbar-title p {{ color:{TEXT_DIM}; font-size:12.5px; margin:2px 0 0; }}
-.topbar-status {{ display:flex; align-items:center; gap:10px; }}
-
-/* ---- Status pill — netral, tanpa lampu lalu lintas merah-hijau generik ---- */
-.status-pill {{
-    display:inline-flex; align-items:center; gap:7px;
-    font-size:12.5px; font-weight:500;
-    padding:6px 13px 6px 11px; border-radius:20px; white-space:nowrap;
-    background:{SURFACE_2}; color:{TEXT_DIM};
-    border:1px solid transparent;
-}}
-.status-pill .dot {{
-    width:7px; height:7px; border-radius:50%; flex-shrink:0;
-}}
-.status-live .dot {{ background:{TEAL}; }}
-.status-live {{ color:{TEXT}; }}
-.status-stale .dot {{ background:{ACCENT}; }}
-.status-stale {{ color:{TEXT}; background:{ACCENT_SOFT}; }}
-
-/* ---- Tab navigasi — segmented control ala apple.com ---- */
-.stTabs [data-baseweb="tab-list"] {{
-    gap:4px; background:{SURFACE_2}; border:none;
-    border-radius:12px; padding:5px; margin-bottom:22px;
-    width:fit-content;
-}}
-.stTabs [data-baseweb="tab"] {{
-    height:40px; border-radius:9px; padding:0 20px;
-    color:{TEXT_DIM}; font-weight:590; font-size:14px;
-    background:transparent; transition: background 0.15s ease;
-}}
-.stTabs [aria-selected="true"] {{
-    background:{SURFACE} !important; color:{TEXT} !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-}}
-.stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent; }}
-.stTabs [data-baseweb="tab-border"] {{ display:none; }}
-
-.stTabs [data-baseweb="tab"] {{
-    display:flex !important; align-items:center; gap:8px;
-}}
-.stTabs [data-baseweb="tab"]::before {{
-    content:""; width:16px; height:16px; flex-shrink:0;
-    background-color: currentColor;
-    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
-    -webkit-mask-size:contain; mask-size:contain;
-    -webkit-mask-position:center; mask-position:center;
-}}
-.stTabs [data-baseweb="tab"]:nth-of-type(1)::before {{
-    -webkit-mask-image:url('{ICON_TREND}'); mask-image:url('{ICON_TREND}');
-}}
-.stTabs [data-baseweb="tab"]:nth-of-type(2)::before {{
-    -webkit-mask-image:url('{ICON_BARS}'); mask-image:url('{ICON_BARS}');
-}}
-.stTabs [data-baseweb="tab"]:nth-of-type(3)::before {{
-    -webkit-mask-image:url('{ICON_SEARCH}'); mask-image:url('{ICON_SEARCH}');
-}}
-[data-testid="stExpander"] summary {{
-    display:flex !important; align-items:center; gap:9px;
-}}
-[data-testid="stExpander"] summary::before {{
-    content:""; width:16px; height:16px; flex-shrink:0;
-    background-color:{TEXT_DIM};
-    -webkit-mask-image:url('{ICON_INFO}'); mask-image:url('{ICON_INFO}');
-    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
-    -webkit-mask-size:contain; mask-size:contain;
-    -webkit-mask-position:center; mask-position:center;
-}}
-
-.stTabs [data-baseweb="tab"],
-.stTabs [data-baseweb="tab"] * {{
-    border-bottom:none !important;
-    box-shadow:none !important;
-}}
-
-/* ---- Metric cards ---- */
-[data-testid="stMetric"] {{
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 18px;
-    padding: 18px 20px 20px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.035);
-    overflow: visible;
-    height: auto;
-}}
-[data-testid="stMetric"] label {{
-    color: {TEXT_DIM} !important;
-    font-size: 12px !important;
-    font-weight: 500 !important;
-    letter-spacing: 0;
-    text-transform: none;
-}}
-[data-testid="stMetricValue"] {{
-    overflow: visible !important;
-}}
-[data-testid="stMetricValue"] > div {{
-    white-space: normal !important;
-    overflow-wrap: break-word !important;
-    text-overflow: unset !important;
-    overflow: visible !important;
-    line-height: 1.2 !important;
-}}
-[data-testid="stMetricValue"],
-[data-testid="stMetricValue"] * {{
-    color: {TEXT} !important;
-    -webkit-text-fill-color: {TEXT} !important;
-    font-family: var(--font-sans) !important;
-    font-variant-numeric: tabular-nums;
-    font-size: clamp(17px, 1.9vw, 23px) !important;
-    font-weight: 650 !important;
-    letter-spacing: -0.01em;
-    background: none !important;
-    text-shadow: none !important;
-}}
-[data-testid="stMetricDelta"] {{ font-size: 13px !important; font-weight:500; }}
-
-/* ---- Page header (per tab) ---- */
-.page-header {{ margin-bottom:22px; }}
-.page-header h2 {{
-    color:{TEXT}; font-size:26px; font-weight:700; margin:0 0 5px;
-    letter-spacing:-0.02em;
-}}
-.page-header p {{ color:{TEXT_DIM}; font-size:14px; margin:0; }}
-
-/* ---- Regime badge ---- */
-.regime-bull {{ background:rgba(30,142,62,0.10); color:{GREEN}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
-.regime-bear {{ background:rgba(213,55,43,0.10); color:{RED}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
-.regime-side {{ background:{SURFACE_2}; color:{TEXT_DIM}; padding:6px 14px;
-                border-radius:20px; font-weight:600; font-size:13px; border:none; }}
-
-/* ---- Info / warning boxes ---- */
-.info-box {{
-    background:{SURFACE}; border:1px solid {BORDER};
-    border-radius:16px; padding:16px 20px; font-size:13.5px; color:{TEXT_DIM};
-    line-height:1.65; margin-top:12px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-}}
-.info-box b {{ color:{TEXT}; font-weight:600; }}
-.warn-box {{
-    background:#fdf6ea; border:1px solid rgba(177,116,15,0.25);
-    border-radius:16px;
-    padding:16px 20px; font-size:13.5px; color:#7a5109; line-height:1.65;
-    margin-top:12px;
-}}
-.warn-box b {{ color:{AMBER}; font-weight:600; }}
-.disclaimer-box {{
-    background:{SURFACE_2}; border:1px solid {BORDER};
-    border-radius:16px; padding:15px 20px; font-size:12.5px; color:{TEXT_DIM};
-    line-height:1.6; margin-top:18px;
-}}
-.disclaimer-box b {{ color:{TEXT}; }}
-
-/* ---- Fallback banner (sumber data gagal diambil) ----
-   Merah tipis (bukan warn-box amber biasa) supaya user langsung sadar
-   ini beda level dari sekadar "data tertinggal beberapa hari" -- ini
-   berarti fetch-nya betul-betul GAGAL dan dashboard sedang memakai
-   nilai pengganti/darurat, bukan data riil sama sekali. */
-.fallback-box {{
-    background:#fdecea; border:1px solid rgba(213,55,43,0.28);
-    border-radius:16px; padding:16px 20px; font-size:13.5px; color:#8a2a22;
-    line-height:1.65; margin-top:12px; margin-bottom:20px;
-}}
-.fallback-box b {{ color:{RED}; font-weight:600; }}
-
-/* ---- Section label ---- */
-.section-label {{
-    font-family: var(--font-sans);
-    font-size:13px; font-weight:600; color:{TEXT};
-    letter-spacing:0; text-transform:none;
-    margin: 28px 0 14px; padding-bottom:8px;
-    border-bottom:1px solid {BORDER};
-}}
-
-/* ---- Dataframe ---- */
-[data-testid="stDataFrame"] {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; }}
-
-/* ---- Expander ---- */
-[data-testid="stExpander"] {{
-    background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
-}}
-[data-testid="stExpander"] summary {{ font-weight:500; color:{TEXT} !important; }}
-[data-testid="stExpander"] summary span,
-[data-testid="stExpander"] summary p {{ color:{TEXT} !important; }}
-[data-testid="stExpanderDetails"] {{ color:{TEXT_DIM}; }}
-
+html, body, .stApp {{ background:{BG}; color:{TEXT}; }}
+.stApp, button, input, select, textarea {{ font-family:var(--font-sans); }}
+[data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"],
+[data-testid="stMetric"], [role="tab"] {{ font-family:var(--font-sans); }}
+h1, h2, h3, h4 {{ font-family:var(--font-sans); color:{TEXT}; }}
+[data-testid="stHeader"] {{ background:{BG}; }}
+[data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display:none; }}
+.block-container {{ max-width:1320px; padding:4rem 3rem 3rem; }}
+[data-testid="stVerticalBlock"] {{ gap:1rem; }}
+[data-testid="stColumn"], [data-baseweb="tab-panel"] {{ min-width:0; }}
 [data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] li,
-[data-testid="stCaptionContainer"],
-.stCaption, small {{ color:{TEXT_DIM} !important; }}
-[data-testid="stMarkdownContainer"] h1,
-[data-testid="stMarkdownContainer"] h2,
-[data-testid="stMarkdownContainer"] h3,
-[data-testid="stMarkdownContainer"] strong,
-[data-testid="stMarkdownContainer"] b {{ color:{TEXT} !important; }}
-[data-testid="stNotification"] p,
-[data-testid="stNotification"] div {{ color:{TEXT} !important; }}
-[data-testid="stTable"] td, [data-testid="stTable"] th {{ color:{TEXT} !important; }}
-.stSelectbox label, .stRadio label {{ color:{TEXT} !important; }}
+[data-testid="stMarkdownContainer"] li {{ color:{TEXT_DIM}; line-height:1.65; }}
+[data-testid="stMarkdownContainer"] strong {{ color:{TEXT}; }}
+[data-testid="stCaptionContainer"] {{ color:{TEXT_MUTE}; }}
+[data-testid="stCaptionContainer"] p {{ color:{TEXT_MUTE}; }}
+code, .stMarkdown code {{ color:{ACCENT}; background:{ACCENT_SOFT}; }}
+.tnum {{ font-variant-numeric:tabular-nums; }}
 
-button:focus, button:focus-visible,
-[data-baseweb="tab"]:focus, [data-baseweb="tab"]:focus-visible,
-[tabindex]:focus-visible {{
-    outline: 2px solid {ACCENT} !important;
-    outline-offset: 2px;
-    box-shadow: none !important;
-}}
-[data-testid="stStatusWidget"],
-[data-testid="stStatusWidget"] > div,
-div[class*="StatusWidget"] {{
-    background: {SURFACE} !important;
-    border: 1px solid {BORDER} !important;
-    border-radius: 12px !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
-}}
-[data-testid="stStatusWidget"] *,
-div[class*="StatusWidget"] * {{
-    color: {TEXT_DIM} !important;
-    fill: {TEXT_DIM} !important;
-    -webkit-text-fill-color: {TEXT_DIM} !important;
-}}
-[data-testid="stStatusWidget"] code {{
-    color: {TEAL} !important;
-    -webkit-text-fill-color: {TEAL} !important;
-    background: {TEAL_SOFT} !important;
-    border-radius: 4px;
-    padding: 1px 4px;
-}}
+/* A quiet masthead, not another floating card. */
+.topbar {{ display:flex; align-items:center; justify-content:space-between;
+    gap:24px; min-height:48px; margin-bottom:0; }}
+.topbar-brand {{ display:flex; align-items:center; gap:13px; }}
+.topbar-coin {{ display:grid; place-items:center; width:40px; height:40px;
+    background:{ACCENT}; color:{TEXT}; border-radius:11px; font-size:27px; font-weight:600; }}
+.topbar-title h1 {{ font-size:19px; font-weight:650; letter-spacing:-.6px;
+    padding:0; margin:0; line-height:1.3; }}
+.topbar-title p {{ margin:3px 0 0; font-size:12px; color:{TEXT_DIM}; }}
+.topbar-meta {{ color:{TEXT_MUTE}; font:12px var(--font-mono); white-space:nowrap; }}
+.masthead-rule {{ height:1px; background:{BORDER}; margin:0 0 12px; }}
+.research-footer {{ display:flex; justify-content:space-between; flex-wrap:wrap;
+    gap:10px; padding-top:22px; border-top:1px solid {BORDER}; margin-top:24px;
+    color:{TEXT_MUTE}; font-size:12px; }}
 
-[data-testid="stTooltipContent"],
-div[data-baseweb="tooltip"],
-div[data-baseweb="popover"] [role="tooltip"],
-[role="tooltip"] {{
-    background-color: transparent !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    border: none !important;
-    color: {TEXT} !important;
-}}
-[data-testid="stTooltipContent"] *,
-div[data-baseweb="tooltip"] *,
-div[data-baseweb="popover"] [role="tooltip"] *,
-[role="tooltip"] * {{
-    background: transparent !important;
-    color: {TEXT} !important;
-    -webkit-text-fill-color: {TEXT} !important;
-    fill: {TEXT} !important;
-}}
+/* Start state: honest data readiness, no invented quotes or prices. */
+.welcome {{ padding:38px 0 22px; }}
+.eyebrow {{ color:{ACCENT}; font:600 11px var(--font-mono);
+    letter-spacing:1.3px; text-transform:uppercase; margin-bottom:17px; }}
+.welcome h2 {{ font-size:clamp(30px,3.4vw,45px); font-weight:600; line-height:1.16;
+    letter-spacing:-1.8px; margin:0 0 20px; padding:0; max-width:650px; }}
+.welcome p {{ max-width:510px; font-size:15px; line-height:1.7; margin:0; }}
+.ready-panel {{ padding:26px 28px; background:{SURFACE}; border:1px solid {BORDER};
+    border-radius:12px; margin-top:34px; }}
+.ready-panel h3 {{ font-size:15px; font-weight:600; margin:0 0 6px; padding:0; }}
+.ready-panel .panel-caption {{ font-size:12px; margin:0 0 16px; color:{TEXT_MUTE}; }}
+.source-row {{ display:flex; justify-content:space-between; align-items:center;
+    gap:16px; padding:14px 0; border-top:1px solid {GRID}; }}
+.source-name {{ display:block; font-size:13px; font-weight:600; }}
+.source-detail {{ display:block; font-size:12px; color:{TEXT_MUTE}; margin-top:3px; }}
+.source-state {{ font:11px var(--font-mono); color:{TEXT_MUTE}; white-space:nowrap; }}
+.method-strip {{ display:grid; grid-template-columns:repeat(3,1fr); gap:28px;
+    padding:26px 0; border-top:1px solid {BORDER}; border-bottom:1px solid {BORDER};
+    margin:28px 0 12px; }}
+.method-step {{ display:flex; gap:14px; }}
+.method-index {{ font:12px var(--font-mono); color:{ACCENT}; padding-top:3px; }}
+.method-step h3 {{ font-size:14px; font-weight:600; margin:0 0 7px; padding:0; }}
+.method-step p {{ font-size:12.5px; margin:0; max-width:280px; }}
 
-[data-testid="stExpander"] summary:focus,
-[data-testid="stExpander"] summary:hover,
-[data-testid="stExpander"] summary:active,
-[data-testid="stExpander"] details[open] > summary {{
-    box-shadow: none !important;
-    background: {SURFACE_2} !important;
-    color: {TEXT} !important;
-}}
-[data-testid="stExpander"] summary:focus *,
-[data-testid="stExpander"] summary:hover *,
-[data-testid="stExpander"] summary:active *,
-[data-testid="stExpander"] details[open] > summary * {{
-    color: {TEXT} !important;
-    fill: {TEXT} !important;
-}}
-.stButton > button:focus:not(:focus-visible) {{ box-shadow:none !important; outline:none !important; }}
+/* Native navigation: one continuous baseline and a clear active state. */
+.stTabs [role="tablist"] {{ gap:26px; background:transparent;
+    border-bottom:1px solid {BORDER}; margin-bottom:18px; }}
+.stTabs [role="tab"] {{ height:48px; padding:0 2px; border-radius:0;
+    color:{TEXT_DIM}; background:transparent; font-weight:550; }}
+.stTabs [role="tab"] p {{ font-size:13px; white-space:nowrap; }}
+.stTabs [role="tab"][aria-selected="true"] {{ color:{ACCENT}; }}
+.stTabs [role="tab"][aria-selected="true"] p {{ color:{ACCENT}; }}
+.stTabs .react-aria-SelectionIndicator, .stTabs [data-baseweb="tab-highlight"] {{ background:{ACCENT}; height:2px; }}
+.stTabs [data-baseweb="tab-border"] {{ background:transparent; }}
+.stTabs .stTabs [role="tablist"] {{ gap:20px; margin-bottom:10px; }}
+.stTabs .stTabs [role="tab"] {{ height:38px; }}
+.page-header {{ margin:0 0 4px; }}
+.page-header h2 {{ font-size:29px; font-weight:600; letter-spacing:-1px;
+    line-height:1.25; padding:0; margin:0 0 8px; }}
+.page-header p {{ font-size:13px; margin:0; color:{TEXT_DIM}; }}
+.data-status {{ display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    padding:0 0 8px; color:{TEXT_MUTE}; font-size:12px; }}
+.status-pill {{ display:inline-flex; align-items:center; gap:7px; font-size:12px; }}
+.status-pill .dot {{ width:6px; height:6px; border-radius:50%; background:{TEXT_MUTE}; }}
+.status-live .dot {{ background:{GREEN}; }}
+.status-stale .dot {{ background:{AMBER}; }}
+.status-stale {{ color:{AMBER}; }}
+.status-date {{ margin-left:auto; font:11px var(--font-mono); }}
 
-:root, html {{ color-scheme: light !important; }}
+/* The forecast has priority; supporting metrics share a single surface. */
+.forecast-strip {{ display:grid; grid-template-columns:1.05fr 1.15fr 1.25fr .8fr;
+    background:{SURFACE}; border:1px solid {BORDER}; border-radius:12px;
+    overflow:hidden; margin:4px 0 8px; }}
+.forecast-cell {{ padding:20px 24px; position:relative; }}
+.forecast-cell + .forecast-cell {{ border-left:1px solid {BORDER}; }}
+.forecast-primary {{ background:#fff8ef; }}
+.metric-label {{ display:block; color:{TEXT_DIM}; font-size:12px; margin-bottom:13px; }}
+.metric-number {{ font-size:clamp(24px,2.5vw,34px); line-height:1.2; font-weight:600;
+    letter-spacing:-1.4px; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.forecast-primary .metric-number {{ color:{ACCENT}; }}
+.metric-foot {{ display:block; color:{TEXT_MUTE}; font-size:12px; margin-top:10px; }}
+.metric-range {{ display:flex; flex-wrap:nowrap; align-items:baseline; gap:4px;
+    font-family:var(--font-sans); font-size:clamp(19px,2.1vw,30px);
+    line-height:1.2; font-weight:600; letter-spacing:-1.2px;
+    font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.metric-range > span {{ white-space:nowrap; }}
+.range-separator {{ color:{TEXT_MUTE}; font-size:11px; font-weight:400;
+    letter-spacing:0; padding:0 2px; }}
+.metric-regime {{ font-size:27px; letter-spacing:-.8px; font-weight:550; }}
+.delta-positive {{ color:{GREEN}; }}
+.delta-negative {{ color:{RED}; }}
+.regime-bull {{ color:{GREEN}; }}
+.regime-bear {{ color:{RED}; }}
+.regime-side {{ color:{TEXT_DIM}; }}
+[data-testid="stMetric"] {{ padding:18px 20px; border:1px solid {BORDER};
+    border-radius:10px; background:{SURFACE}; }}
+[data-testid="stMetricLabel"] {{ color:{TEXT_DIM}; }}
+[data-testid="stMetricValue"] {{ color:{TEXT}; font-size:27px;
+    font-variant-numeric:tabular-nums; letter-spacing:-1px; }}
+[data-testid="stMetricValue"] > div {{ white-space:normal; overflow-wrap:anywhere; }}
+.section-label {{ color:{TEXT}; font-size:15px; font-weight:600;
+    margin:20px 0 3px; letter-spacing:-.25px; }}
+[data-testid="stPlotlyChart"] {{ border:1px solid {BORDER}; border-radius:12px;
+    overflow:hidden; background:{SURFACE}; }}
+.detail-panel {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:12px;
+    padding:8px 22px 18px; }}
+.detail-row {{ display:flex; justify-content:space-between; align-items:baseline;
+    gap:20px; padding:12px 0; border-bottom:1px solid {GRID}; font-size:13px; }}
+.detail-row dt {{ color:{TEXT_DIM}; }}
+.detail-row dd {{ margin:0; text-align:right; color:{TEXT}; font-weight:550;
+    font-variant-numeric:tabular-nums; }}
+.detail-panel dl {{ margin:0; }}
+.detail-note {{ color:{TEXT_MUTE}; font-size:12px; line-height:1.6; margin:14px 0 0; }}
+.market-item {{ padding:16px 0; border-bottom:1px solid {GRID}; }}
+.market-item:last-child {{ border:0; padding-bottom:0; }}
+.market-heading {{ display:flex; justify-content:space-between; align-items:center;
+    gap:16px; font-size:13px; color:{TEXT_DIM}; }}
+.market-heading strong {{ color:{TEXT}; font-weight:600; font-variant-numeric:tabular-nums; }}
+.market-item p {{ font-size:12px; margin:6px 0 0; }}
 
-.stButton > button,
-.stButton > button[kind],
-[data-testid="stBaseButton-secondary"],
-[data-testid="baseButton-secondary"] {{
-    border-radius:980px !important; font-weight:590 !important;
-    border:1px solid #22c55e !important; background:#22c55e !important;
-    color:#ffffff !important; -webkit-text-fill-color:#ffffff !important;
-    transition: background 0.15s ease;
-}}
-.stButton > button *, [data-testid="stBaseButton-secondary"] * {{
-    color:#ffffff !important; -webkit-text-fill-color:#ffffff !important;
-}}
-.stButton > button:hover {{ background:#16a34a !important; border-color:#16a34a !important; }}
+/* Disclosures remain visible but do not bury the forecast. */
+.info-box {{ padding:17px 20px; background:{SURFACE_2}; border-radius:8px;
+    color:{TEXT_DIM}; font-size:13px; line-height:1.75; margin:4px 0 10px; }}
+.info-box b {{ color:{TEXT}; }}
+.info-box summary {{ cursor:pointer; font-weight:550; color:{TEXT}; }}
+.info-box .notice-body {{ margin-top:12px; }}
+.warn-box {{ padding:14px 18px; border-left:3px solid {AMBER}; background:#faf6ed;
+    border-radius:0 8px 8px 0; color:#755119; font-size:12.5px; line-height:1.7; margin:0 0 8px; }}
+.warn-box summary {{ cursor:pointer; color:#755119; font-weight:500; }}
+.warn-box summary:focus-visible {{ outline:2px solid {ACCENT}; outline-offset:5px; }}
+.warn-box .notice-body {{ margin-top:12px; color:{TEXT_DIM}; }}
+.disclaimer-box {{ color:{TEXT_MUTE}; font-size:12px; line-height:1.7;
+    padding:16px 0; margin-top:18px; border-top:1px solid {BORDER}; }}
+.disclaimer-box b {{ color:{TEXT_DIM}; }}
+.notice-icon {{ display:inline-grid; place-items:center; width:14px; height:14px;
+    border:1px solid currentColor; border-radius:50%; font-size:10px; font-weight:700;
+    margin-right:6px; vertical-align:1px; }}
+[data-testid="stExpander"] {{ background:transparent; border-color:{BORDER}; border-radius:8px; }}
+[data-testid="stExpander"] summary {{ color:{TEXT}; font-size:13px; }}
+[data-testid="stExpander"] summary:hover {{ background:{SURFACE_2}; }}
 
-.table-wrap {{
-    background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px;
-    overflow-x:auto; overflow-y:hidden; margin-top:8px;
-    -webkit-overflow-scrolling: touch;
-}}
-table.apple-table {{
-    width:100%; min-width:880px; border-collapse:collapse; font-size:13.5px;
-    color:{TEXT};
-}}
-table.apple-table thead th {{
-    background:{SURFACE_2}; color:{TEXT_DIM}; font-weight:600;
-    text-align:left; padding:10px 14px; border-bottom:1px solid {BORDER};
-    white-space:nowrap;
-}}
-table.apple-table tbody td {{
-    padding:9px 14px; border-bottom:1px solid {BORDER};
-    color:{TEXT}; white-space:nowrap;
-}}
-table.apple-table tbody tr:last-child td {{ border-bottom:none; }}
-table.apple-table tbody tr:hover {{ background:{BG}; }}
+/* Controls: readable tooltips, keyboard focus, pressed feedback. */
+.stButton button {{ border-radius:7px; min-height:42px; padding:8px 18px;
+    transition:background .16s ease, border-color .16s ease, transform .16s ease; }}
+.stButton button[kind="primary"] {{ background:{ACCENT}; border-color:{ACCENT}; color:{TEXT}; }}
+.stButton button[kind="primary"] p {{ color:{TEXT}; font-weight:600; font-size:13px; }}
+.stButton button[kind="primary"]:hover {{ background:#e89028; border-color:#e89028; }}
+.stButton button[kind="secondary"] {{ background:{SURFACE}; border-color:{BORDER}; color:{TEXT}; }}
+.stButton button[kind="secondary"]:hover {{ background:{SURFACE_2}; border-color:#b2bac4; }}
+.stButton button:active {{ transform:translateY(1px); }}
+button:focus-visible, [tabindex]:focus-visible {{ outline:2px solid {ACCENT} !important; outline-offset:3px; }}
+[data-testid="stTooltipContent"] {{ background:{TEXT}; color:white; border-radius:6px; }}
+[data-testid="stSelectbox"] label {{ color:{TEXT_DIM}; font-size:12px; }}
+[data-baseweb="select"] > div {{ background:{SURFACE}; border-color:{BORDER}; border-radius:7px; }}
+[data-baseweb="select"] {{ color:{TEXT}; }}
+[data-testid="stSpinner"] {{ color:{TEXT_DIM}; padding:24px 0; }}
 
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
-    background: {SURFACE} !important;
-    border: 1px solid {BORDER} !important;
-    border-radius: 12px !important;
-    color: {TEXT} !important;
-}}
-[data-testid="stSelectbox"] div[data-baseweb="select"] * {{
-    color: {TEXT} !important;
-    -webkit-text-fill-color: {TEXT} !important;
-    fill: {TEXT_DIM} !important;
-}}
-div[data-baseweb="popover"] ul[role="listbox"],
-div[data-baseweb="menu"] {{
-    background: {SURFACE} !important;
-    border: 1px solid {BORDER} !important;
-    border-radius: 12px !important;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.10) !important;
-}}
-div[data-baseweb="popover"] ul[role="listbox"] li,
-div[data-baseweb="menu"] li {{
-    background: {SURFACE} !important;
-    color: {TEXT} !important;
-}}
-div[data-baseweb="popover"] ul[role="listbox"] li:hover,
-div[data-baseweb="menu"] li:hover,
-div[data-baseweb="popover"] ul[role="listbox"] li[aria-selected="true"],
-div[data-baseweb="menu"] li[aria-selected="true"] {{
-    background: {SURFACE_2} !important;
-    color: {TEXT} !important;
-}}
-
-html, body, .stApp, .main, .block-container {{
-    overflow-x: hidden !important;
-    max-width: 100vw;
-}}
-
-[data-testid="stMarkdownContainer"]:has(table) {{
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch;
-}}
-[data-testid="stMarkdownContainer"] table {{
-    border-collapse: collapse;
-    min-width: 520px;
-}}
+/* Tables scroll within their own region, never across the page. */
+.table-wrap {{ max-width:100%; overflow-x:auto; background:{SURFACE};
+    border:1px solid {BORDER}; border-radius:10px; margin:6px 0 10px; }}
+table.analytics-table {{ width:100%; min-width:1050px; border-collapse:collapse; font-size:12px; }}
+table.analytics-table th {{ text-align:left; font-weight:500; color:{TEXT_DIM};
+    background:#f1f3f5; padding:13px 16px; white-space:nowrap; }}
+table.analytics-table td {{ padding:15px 16px; color:{TEXT}; border-top:1px solid {GRID}; white-space:nowrap; }}
+table.analytics-table td:nth-child(n+5), table.analytics-table th:nth-child(n+5) {{
+    text-align:right; font-variant-numeric:tabular-nums; }}
+table.analytics-table tbody tr:last-child {{ background:#fff8ef; }}
+table.analytics-table tbody tr:last-child td:nth-child(2) {{ color:{ACCENT}; font-weight:650; }}
+table.analytics-table tbody tr:hover {{ background:{SURFACE_2}; }}
+table.analytics-table th:nth-child(2), table.analytics-table td:nth-child(2) {{
+    position:sticky; left:0; background:{SURFACE}; }}
+table.analytics-table th:nth-child(2) {{ background:#f1f3f5; }}
+table.analytics-table tbody tr:last-child td:nth-child(2) {{ background:#fff8ef; }}
+[data-testid="stMarkdownContainer"]:has(table) {{ overflow-x:auto; }}
+[data-testid="stMarkdownContainer"] table:not(.analytics-table) {{ min-width:560px; font-size:13px; }}
 [data-testid="stMarkdownContainer"] table th,
-[data-testid="stMarkdownContainer"] table td {{
-    white-space: nowrap;
-    padding: 8px 12px;
-    border-bottom: 1px solid {BORDER};
+[data-testid="stMarkdownContainer"] table td {{ border-color:{BORDER}; }}
+
+@media (max-width:1000px) {{
+    .block-container {{ padding:4rem 1.5rem 2rem; }}
+    .forecast-strip {{ grid-template-columns:1fr 1fr; }}
+    .forecast-cell:nth-child(3) {{ border-left:0; }}
+    .forecast-cell:nth-child(n+3) {{ border-top:1px solid {BORDER}; }}
+    .metric-number {{ font-size:32px; }}
+    .metric-range {{ font-size:clamp(19px,2.7vw,27px); }}
+    .topbar-meta {{ display:none; }}
 }}
-[data-testid="stMarkdownContainer"] table th {{
-    background: {SURFACE_2}; color: {TEXT_DIM}; text-align:left;
+@media (max-width:640px) {{
+    .block-container {{ padding:4rem 1rem 2rem; }}
+    [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap !important; }}
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+        flex:1 1 100% !important; width:100% !important; min-width:0 !important; }}
+    .topbar {{ min-height:54px; margin:0; }}
+    .topbar-title h1 {{ font-size:17px; }}
+    .topbar-title p {{ font-size:12px; }}
+    .welcome {{ padding:20px 0 4px; }}
+    .welcome h2 {{ font-size:33px; letter-spacing:-1.1px; }}
+    .ready-panel {{ margin-top:8px; padding:22px; }}
+    .method-strip {{ grid-template-columns:1fr; gap:22px; margin-top:12px; }}
+    .method-step p {{ max-width:none; }}
+    .forecast-strip {{ grid-template-columns:1fr; }}
+    .forecast-cell {{ padding:18px 14px; }}
+    .forecast-cell + .forecast-cell {{ border-left:0; border-top:1px solid {BORDER}; }}
+    .metric-number {{ font-size:27px; letter-spacing:-1px; }}
+    .metric-range {{ font-size:clamp(19px,6vw,27px); letter-spacing:-1px; }}
+    .range-separator {{ padding:0; }}
+    .metric-label {{ font-size:12px; }}
+    .metric-foot {{ font-size:10px; }}
+    .metric-regime {{ font-size:25px; }}
+    .page-header h2 {{ font-size:25px; }}
+    .page-header p {{ font-size:12px; }}
+    .stTabs [role="tablist"] {{ gap:18px; }}
+    .stTabs [role="tab"] p {{ font-size:12px; }}
+    .data-status {{ gap:10px 16px; }}
+    .status-date {{ margin-left:0; width:100%; }}
+    .detail-panel {{ padding:6px 16px 16px; }}
 }}
-
-.warn-box, .info-box, .disclaimer-box, .fallback-box {{ margin-bottom:20px; }}
-
-[data-testid="stHorizontalBlock"] {{ align-items: stretch !important; }}
-[data-testid="stHorizontalBlock"] > div {{ display:flex !important; }}
-[data-testid="stHorizontalBlock"] > div > div {{ width:100%; display:flex; }}
-[data-testid="stHorizontalBlock"] [data-testid="stVerticalBlock"] {{ width:100%; }}
-[data-testid="stMetric"] {{
-    display:flex !important; flex-direction:column; justify-content:center;
-    width:100%;
-}}
-
-@media (max-width: 900px) {{
-    .topbar {{ padding:14px 18px; border-radius:16px; }}
-    .topbar-title h1 {{ font-size:16.5px; }}
-    .page-header h2 {{ font-size:21px; }}
-    [data-testid="stMetricValue"] {{ font-size:20px !important; }}
-    [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
-    [data-testid="stHorizontalBlock"] > div {{ min-width: 46% !important; }}
-    .block-container {{ padding-left:0.9rem; padding-right:0.9rem; }}
-
-    .stTabs [data-baseweb="tab-list"] {{
-        flex-wrap: wrap !important;
-        width: 100% !important;
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        flex: 1 1 48%;
-        padding:0 10px; font-size:12.5px;
-        justify-content:center;
-    }}
-
-    [data-baseweb="tab-panel"]:nth-of-type(3) {{
-        padding-bottom: 56px;
-    }}
-}}
-@media (max-width: 560px) {{
-    [data-testid="stHorizontalBlock"] > div {{ min-width: 100% !important; }}
+@media (prefers-reduced-motion:reduce) {{
+    *, *::before, *::after {{ transition:none !important; animation:none !important; }}
 }}
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-# HELPER — render tabel sebagai HTML (bukan st.dataframe)
-# ============================================================
-def render_table(df: pd.DataFrame):
-    html = df.to_html(index=False, escape=False, classes="apple-table", border=0)
-    st.markdown(f"<div class='table-wrap'>{html}</div>", unsafe_allow_html=True)
 
-# ============================================================
-# HELPER — kotak literasi fallback (dipakai saat sumber data gagal
-# diambil sama sekali, bukan sekadar "tertinggal beberapa hari")
-# ------------------------------------------------------------
-# Catatan: helper ini HANYA menampilkan keterangan ke user. Tidak ada
-# logic model/prediksi yang berubah -- fallback data itu sendiri
-# (nilai default, penyaringan tanggal, dsb) tetap dilakukan di masing-
-# masing fungsi fetch_*, helper ini cuma "corong" pesannya ke layar.
-# ============================================================
-def render_fallback_box(judul: str, penjelasan: str, dampak: str):
-    st.markdown(f"""
-    <div class='fallback-box'>
-    {WARN_ICON}<b>{judul}</b><br>
-    {penjelasan}<br><br>
-    <span style='font-size:12px;'>{dampak}</span>
-    </div>
-    """, unsafe_allow_html=True)
+def render_table(df: pd.DataFrame):
+    html = df.to_html(index=False, escape=True, classes="analytics-table", border=0)
+    st.markdown(
+        f"<div class='table-wrap' role='region' aria-label='Hasil evaluasi model' tabindex='0'>{html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_chart(fig, **kwargs):
+    """One visual language for charts; only presentation settings change."""
+    margins = fig.layout.margin.to_plotly_json()
+    for side, minimum in {"l": 16, "r": 16, "t": 40, "b": 16}.items():
+        margins[side] = max(margins.get(side) or 0, minimum)
+    fig.update_layout(
+        paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
+        margin=margins,
+        font=dict(family="Segoe UI, sans-serif", color=TEXT, size=12),
+        hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font_color=TEXT),
+        modebar=dict(bgcolor="rgba(255,255,255,0)", color=TEXT_MUTE, activecolor=ACCENT),
+    )
+    fig.update_xaxes(zeroline=False, showline=False, gridcolor=GRID, automargin=True)
+    fig.update_yaxes(zeroline=False, showline=False, gridcolor=GRID, automargin=True)
+    st.plotly_chart(fig, use_container_width=True, theme=None,
+                    config={"displaylogo": False, "scrollZoom": False,
+                            "modeBarButtonsToRemove": ["lasso2d", "select2d"]}, **kwargs)
+
 
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
-# ------------------------------------------------------------
-# CATATAN FALLBACK LITERASI:
-# Ketiga fungsi fetch_* di bawah ini TIDAK diubah alur/logic intinya.
-# Yang ditambahkan hanyalah:
-#   1. Penangkapan pesan error asli (bukan ditelan begitu saja).
-#   2. Nilai pengganti yang aman secara struktur (tidak bikin baris
-#      kode berikutnya crash karena kolom hilang), persis seperti
-#      perilaku sebelumnya untuk sumber yang sudah punya fallback.
-#   3. Elemen tambahan pada dict return: "_fallback_reason" (str atau
-#      None) supaya lapisan tampilan (UI) tahu persis pesan apa yang
-#      harus ditunjukkan ke user, tanpa perlu menebak dari flag boolean
-#      saja.
 # ============================================================
-
-def _fetch_price_yfinance(start):
-    """Sumber utama. Bisa melempar exception -- ditangkap oleh caller."""
+@st.cache_data(ttl=3600)
+def fetch_price(start="2021-01-01"):
     import yfinance as yf
     df = yf.download("BTC-USD", start=start, interval="1d", progress=False)
     if isinstance(df.columns, pd.MultiIndex):
@@ -593,200 +409,15 @@ def _fetch_price_yfinance(start):
     df = df[["date","Open","High","Low","Close","Volume"]].set_index("date")
     df.columns = ["open","high","low","close","volume"]
     df = df.dropna()
-    if len(df) == 0:
-        raise ValueError("Yahoo Finance merespons tapi tidak mengembalikan satu baris pun")
-    return df
 
-
-def _fetch_price_coingecko(start):
-    """
-    Sumber fallback jika Yahoo Finance gagal/basi: CoinGecko public API
-    (tanpa API key).
-
-    Catatan penting soal PENANGGALAN candle harian CoinGecko:
-    endpoint /market_chart mengembalikan satu titik harga per hari yang
-    di-timestamp pada 00:00 UTC. Titik 00:00 UTC tanggal D itu sebetulnya
-    adalah harga PENUTUPAN hari (D-1) -- bukan harga hari D -- karena
-    BTC diperdagangkan 24/7 tanpa jam tutup pasar; 00:00 UTC hanyalah
-    batas hari kalender. Kalau timestamp itu di-normalize apa adanya
-    (tanpa dikurangi 1 hari), setiap candle akan ter-label MAJU satu
-    hari dari closing price resmi yang ditampilkan di coingecko.com
-    (mis. harga penutupan 28 Agustus akan salah dianggap sebagai harga
-    tanggal 29 Agustus). Titik TERAKHIR pada respons API juga berbeda
-    sifatnya -- itu adalah harga live/berjalan pada saat request dibuat
-    (timestamp-nya TIDAK persis 00:00 UTC), merepresentasikan harga
-    hari ini yang belum final, bukan penutupan resmi hari sebelumnya.
-    Fungsi ini menangani kedua kasus tersebut secara terpisah supaya
-    penanggalannya konsisten dengan yang ditampilkan di situs CoinGecko.
-
-    Catatan lain: endpoint publik gratis CoinGecko hanya memberi harga
-    penutupan (close) harian, bukan OHLC penuh -- kolom open/high/low
-    diisi sama dengan close sebagai placeholder struktural (tidak
-    dipakai untuk fitur volatilitas intraday apa pun di pipeline ini).
-    Bisa melempar exception -- ditangkap oleh caller.
-    """
-    # PENTING: pakai datetime.utcnow() (naive) di sini, BUKAN
-    # pd.Timestamp.utcnow() (tz-aware/UTC-localized) -- mengurangkan
-    # timestamp tz-aware dengan tz-naive (pd.Timestamp(start)) melempar
-    # "TypeError: Cannot subtract tz-naive and tz-aware datetime-like
-    # objects". Ini konsisten dengan today_utc di fetch_price() yang
-    # juga sengaja dibuat naive.
-    days = (pd.Timestamp(datetime.utcnow().date()) - pd.Timestamp(start)).days + 2
-    days = min(max(days, 2), 365)  # granularitas harian gratis dibatasi ~365 hari
-    r = requests.get(
-        "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
-        params={"vs_currency": "usd", "days": days, "interval": "daily"},
-        timeout=20,
-    )
-    r.raise_for_status()
-    prices = r.json().get("prices", [])
-    if not prices:
-        raise ValueError("CoinGecko tidak mengembalikan data harga")
-
-    df = pd.DataFrame(prices, columns=["ts", "close"])
-    df["ts_dt"] = pd.to_datetime(df["ts"], unit="ms")
-    df = df.sort_values("ts_dt")
-
-    # Titik yang persis jatuh di 00:00:00 UTC merepresentasikan
-    # penutupan hari SEBELUMNYA -> mundurkan tanggalnya 1 hari supaya
-    # cocok dengan label "Tutup" di coingecko.com. Titik lain (biasanya
-    # hanya titik TERAKHIR, yaitu harga live saat request) dibiarkan
-    # apa adanya -- itu representasi harga hari ini yang masih berjalan,
-    # dan nantinya akan disaring oleh `_clip_today` di fetch_price()
-    # kalau memang belum jadi "hari kemarin" yang lengkap.
-    is_midnight = (df["ts_dt"].dt.hour == 0) & (df["ts_dt"].dt.minute == 0)
-    df["date"] = df["ts_dt"].dt.normalize()
-    df.loc[is_midnight, "date"] = df.loc[is_midnight, "date"] - pd.Timedelta(days=1)
-
-    df = df.groupby("date", as_index=True)["close"].last().to_frame()
-    df["open"], df["high"], df["low"] = df["close"], df["close"], df["close"]
-    df["volume"] = np.nan
-    df = df[["open","high","low","close","volume"]].dropna(subset=["close"])
-    if len(df) == 0:
-        raise ValueError("CoinGecko merespons tapi tidak ada baris valid setelah diproses")
-    return df
-
-
-# Ambang batas "segar": kalau baris terakhir sebuah sumber lebih tua dari
-# ini (dalam hari, dibanding tanggal hari ini), sumber itu dianggap BASI
-# dan layak dibandingkan dengan sumber lain -- bukan cuma dipakai apa
-# adanya selama fetch-nya tidak melempar exception. Nilai 1 hari dipilih
-# supaya konsisten dengan logic `is_price_fresh` yang sudah dipakai di
-# bagian tampilan (staleness_days <= 1 dianggap up-to-date).
-PRICE_FRESH_THRESHOLD_DAYS = 1
-
-
-@st.cache_data(ttl=3600)
-def fetch_price(start="2021-01-01"):
-    """
-    Return: (df, source, fallback_reason)
-        df              : dataframe harga OHLCV (kosong jika gagal total)
-        source          : "yfinance" atau "coingecko" -- SIAPA PUN yang
-                           datanya paling baru pada saat fetch ini
-                           dijalankan, bukan otomatis yfinance jika dia
-                           tidak melempar error. None jika gagal total.
-        fallback_reason : None HANYA jika yfinance dipilih lewat jalur
-                          cepat (sukses DAN sudah segar) -- tidak perlu
-                          penjelasan apa pun ke user. Di SEMUA kasus lain
-                          (termasuk saat tetap memakai yfinance karena
-                          cadangan tidak membantu) field ini SELALU diisi
-                          dengan alasan teknis, termasuk pesan error asli
-                          dari sumber yang gagal, supaya kegagalan sumber
-                          cadangan tidak pernah "hilang diam-diam" dari UI.
-
-    Alur (urutan proses, bukan hasil akhir langsung):
-      1. Fetch yfinance dulu. Kalau BERHASIL dan datanya SEGAR -> langsung
-         dipakai, tidak perlu memanggil sumber lain sama sekali (hemat
-         request setiap cache di-refresh).
-      2. Kalau yfinance gagal ATAU sukses-tapi-basi -> baru fetch CoinGecko
-         sebagai satu-satunya sumber cadangan.
-      3. Bandingkan tanggal candle TERAKHIR antara yfinance dan CoinGecko
-         -> pakai yang paling baru.
-      4. Kalau CoinGecko tidak berhasil ATAU tidak lebih baru dari
-         yfinance -> tetap pakai yfinance, tapi jelaskan di
-         fallback_reason kenapa cadangan tidak dipakai (gagal, atau
-         berhasil tapi tidak lebih baru).
-      5. Kalau yfinance gagal total DAN CoinGecko juga gagal total ->
-         baru dianggap gagal fatal (df kosong, source None).
-    """
     today_utc = pd.Timestamp(datetime.utcnow().date())
-
-    def _clip_today(df):
-        return df[df.index < today_utc]
-
-    def _try(name, fn):
-        try:
-            df = _clip_today(fn(start))
-            if len(df) == 0:
-                return df, f"{name}: mengembalikan data tapi kosong setelah difilter."
-            return df, None
-        except Exception as e:
-            return pd.DataFrame(), f"{name}: {type(e).__name__}: {e}"
-
-    # ---- 1. Jalur cepat: coba Yahoo Finance dulu ----
-    df_yf, yf_error = _try("Yahoo Finance", _fetch_price_yfinance)
-    yf_last  = df_yf.index.max() if len(df_yf) else None
-    yf_fresh = (yf_last is not None and
-                (today_utc - yf_last).days <= PRICE_FRESH_THRESHOLD_DAYS)
-
-    if yf_error is None and yf_fresh:
-        return df_yf, "yfinance", None
-
-    # ---- 2. yfinance gagal ATAU sukses-tapi-basi -> coba CoinGecko ----
-    df_cg, cg_error = _try("CoinGecko", _fetch_price_coingecko)
-    cg_last = df_cg.index.max() if len(df_cg) else None
-
-    # ---- 5. Kedua sumber gagal total (fatal) ----
-    if yf_last is None and cg_last is None:
-        fatal_reason = (
-            f"Gagal mengambil data harga dari kedua sumber yang dicoba. "
-            f"Yahoo Finance: {yf_error}. CoinGecko: {cg_error}."
-        )
-        return pd.DataFrame(columns=["open","high","low","close","volume"]), None, fatal_reason
-
-    # ---- 4. CoinGecko tidak berhasil, atau berhasil tapi tidak lebih
-    # baru dari yfinance -> tetap pakai yfinance ----
-    if cg_last is None or (yf_last is not None and yf_last >= cg_last):
-        reason = (
-            f"Yahoo Finance dipakai apa adanya (candle terakhir "
-            f"{yf_last.strftime('%d %b %Y') if yf_last else '-'}"
-            f"{', gagal awalnya karena: ' + yf_error if yf_error else ''}). "
-            f"CoinGecko sudah dicoba sebagai cadangan tapi "
-            f"{('gagal: ' + cg_error) if cg_error else 'candle terakhirnya tidak lebih baru dari Yahoo Finance'}."
-        )
-        return df_yf, "yfinance", reason
-
-    # ---- CoinGecko terbukti lebih baru -> beralih ----
-    reason_parts = []
-    if yf_error:
-        reason_parts.append(f"Yahoo Finance gagal diakses ({yf_error}).")
-    else:
-        reason_parts.append(
-            f"Yahoo Finance berhasil diakses tapi datanya tertinggal "
-            f"(candle terakhir {yf_last.strftime('%d %b %Y')})."
-        )
-    reason_parts.append(
-        f"Dashboard otomatis beralih memakai data dari CoinGecko "
-        f"karena candle terakhirnya lebih baru "
-        f"({cg_last.strftime('%d %b %Y')})."
-    )
-    return df_cg, "coingecko", " ".join(reason_parts)
+    df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
+    return df
 
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
-    """
-    Return: (df, is_live, fallback_reason)
-        df              : dataframe kolom [value, value_classification, polarity]
-        is_live         : True jika berhasil ambil dari API Fear & Greed
-        fallback_reason : None jika sukses, atau string penjelasan error
-                          jika API gagal diakses (df lalu diisi nilai
-                          netral/polarity=0 sepanjang rentang tanggal
-                          harga, supaya pipeline tidak crash karena
-                          kolom 'polarity' hilang).
-    """
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
-        r.raise_for_status()
         data = r.json()["data"]
         df = pd.DataFrame(data)
         df["date"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
@@ -794,26 +425,9 @@ def fetch_sentiment():
         mapping = {"Extreme Fear":-1,"Fear":-0.5,"Neutral":0,"Greed":0.5,"Extreme Greed":1}
         df["polarity"] = df["value_classification"].map(mapping)
         df["polarity"] = df["polarity"].fillna((df["value"].astype(int)-50)/50)
-
-        if len(df) == 0:
-            raise ValueError("API mengembalikan data kosong")
-
-        return df, True, None
-    except Exception as e:
-        # Fallback netral: rentang tanggal panjang, polarity=0 (Neutral),
-        # supaya join & ffill di build_features_and_predict() tetap
-        # menemukan kolom 'polarity' dan tidak crash seperti sebelumnya.
-        idx = pd.date_range("2018-01-01", pd.Timestamp.today().normalize(), freq="D")
-        df = pd.DataFrame({
-            "value": 50,
-            "value_classification": "Neutral",
-            "polarity": 0.0,
-        }, index=idx)
-        df.index.name = "date"
-        reason = (f"Gagal mengambil data sentimen dari API Fear & Greed "
-                  f"({type(e).__name__}: {e}). Dashboard sementara memakai "
-                  f"nilai netral (polarity = 0) untuk semua tanggal.")
-        return df, False, reason
+        return df, True
+    except Exception:
+        return pd.DataFrame(), False
 
 @st.cache_data(ttl=3600)
 def fetch_onchain(start="2021-01-01"):
@@ -827,17 +441,10 @@ def fetch_onchain(start="2021-01-01"):
        kemungkinan besar TIDAK live lagi (CoinMetrics menghentikan
        pembaruan sebagian metrik Community Data sejak ~Mei 2026), sehingga
        datanya bisa berhenti di tanggal tertentu di masa lalu.
-    3. Jika CSV fallback JUGA gagal (mis. GitHub raw tidak bisa diakses,
-       koneksi jaringan bermasalah) -> baru dianggap gagal total, dan
-       dikembalikan dataframe kosong + alasan gagal, alih-alih membiarkan
-       exception menjalar tanpa keterangan.
 
-    Return: (df, is_live, fallback_reason)
-        df              : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
-        is_live         : True jika data diambil dari jalur live/premium
-        fallback_reason : None jika sukses (live ataupun CSV fallback biasa),
-                          atau string penjelasan jika KEDUA sumber (live &
-                          CSV) sama-sama gagal diakses.
+    Return: (df, is_live)
+        df       : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
+        is_live  : True jika data diambil dari jalur live/premium
     """
     api_key = None
     try:
@@ -870,30 +477,18 @@ def fetch_onchain(start="2021-01-01"):
                 df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
                 df = df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:]
                 if len(df.dropna()) > 0:
-                    return df, True, None
+                    return df, True
         except Exception:
-            pass  # lanjut ke fallback CSV di bawah, sesuai perilaku semula
+            pass  # jatuh ke fallback gratis di bawah
 
-    # --- Fallback CSV Community gratis
-    try:
-        url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-        df["time"] = pd.to_datetime(df["time"], errors="coerce")
-        df = df.set_index("time")
-        df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
-        df = df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:]
-        if len(df) == 0:
-            raise ValueError("CSV Community tidak mengandung baris pada rentang tanggal ini")
-        return df, False, None
-    except Exception as e:
-        # Gagal total (live gagal/tidak ada key, CSV juga gagal). Kembalikan
-        # struktur kosong yang aman + alasan, alih-alih exception mentah.
-        empty = pd.DataFrame(columns=["exchange_netflow","FlowInExNtv","FlowOutExNtv"])
-        reason = (f"Gagal mengambil data on-chain dari CoinMetrics maupun CSV "
-                  f"fallback-nya di GitHub ({type(e).__name__}: {e}).")
-        return empty, False, reason
+    # --- Fallback: CSV Community gratis (mungkin sudah berhenti update) ---
+    url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
+    r = requests.get(url, timeout=30)
+    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
+    df = df.set_index("time")
+    df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
+    return df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:], False
 
 # ============================================================
 # FUNGSI FEATURE ENGINEERING + MODEL
@@ -904,19 +499,9 @@ def build_features_and_predict():
     import xgboost as xgb
 
     # Fetch semua data
-    df_p, price_source, price_fallback_reason = fetch_price()
-    if price_source is None or len(df_p) == 0:
-        # Harga WAJIB tersedia dari salah satu sumber (yfinance ATAU
-        # CoinGecko). Jika keduanya gagal, baru pipeline dihentikan
-        # di sini -- logic model itu sendiri tidak berubah, hanya jumlah
-        # sumber yang dicoba sebelum benar-benar menyerah.
-        raise RuntimeError(
-            price_fallback_reason or
-            "Data harga BTC kosong dari semua sumber yang dicoba."
-        )
-
-    df_s, sent_is_live, sent_fallback_reason = fetch_sentiment()
-    df_o, onchain_live, onchain_fallback_reason = fetch_onchain()
+    df_p        = fetch_price()
+    df_s, _     = fetch_sentiment()
+    df_o, onchain_live = fetch_onchain()
 
     df = df_p[["close"]].copy()
     df = df.join(df_s[["polarity"]], how="left")
@@ -931,15 +516,6 @@ def build_features_and_predict():
 
     df["polarity"]         = df["polarity"].ffill()
     df["exchange_netflow"] = df["exchange_netflow"].ffill()
-
-    # Jika on-chain gagal total (df_o kosong), exchange_netflow akan
-    # kosong semua (NaN) setelah ffill dan tidak ada nilai riil untuk
-    # dipakai. Sama seperti sentimen, dipakai nilai netral (0) sebagai
-    # fallback literasi, supaya baris berikut (dropna) tidak menghapus
-    # SELURUH data harga hanya karena on-chain gagal diambil.
-    if onchain_fallback_reason is not None:
-        df["exchange_netflow"] = df["exchange_netflow"].fillna(0.0)
-
     df = df.dropna(subset=["close","polarity","exchange_netflow"])
 
     # Features
@@ -1049,15 +625,15 @@ def build_features_and_predict():
         "onchain_live": onchain_live,
         "onchain_last_real_date": onchain_last_real_date,
         "onchain_staleness_days": onchain_staleness_days,
-        # --- Tambahan untuk literasi fallback di lapisan UI ---
-        "price_source": price_source,
-        "price_fallback_reason": price_fallback_reason,
-        "sent_fallback_reason": sent_fallback_reason,
-        "onchain_fallback_reason": onchain_fallback_reason,
     }
 
 # ============================================================
 # STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
+# ------------------------------------------------------------
+# Lihat "CATATAN REVISI (Agustus 2026 — model tidak auto-run saat dibuka)"
+# di kepala berkas. Flag ini menentukan apakah kita berhenti setelah
+# menampilkan topbar saja (belum pernah dijalankan) atau lanjut memuat
+# data + menjalankan model (sudah/baru saja ditekan tombolnya).
 # ============================================================
 if "dashboard_started" not in st.session_state:
     st.session_state.dashboard_started = False
@@ -1065,56 +641,85 @@ if "dashboard_started" not in st.session_state:
 # ============================================================
 # TOPBAR — branding (bagian yang tidak butuh data dulu)
 # ============================================================
-topbar_col, refresh_col = st.columns([6, 1])
+def start_dashboard():
+    if st.session_state.dashboard_started:
+        st.cache_data.clear()
+    st.session_state.dashboard_started = True
+
+
+topbar_col, refresh_col = st.columns([4, 1], vertical_alignment="center")
 with topbar_col:
     st.markdown("""
-    <div class='topbar'>
+    <header class='topbar'>
         <div class='topbar-brand'>
-            <div class='topbar-coin'>₿</div>
+            <div class='topbar-coin' aria-hidden='true'>₿</div>
             <div class='topbar-title'>
                 <h1>BTC Dashboard</h1>
-                <p>Prediksi probabilistik harga Bitcoin · HMM + XGBoost Quantile + Conformal</p>
+                <p>Prediksi Probabilistik</p>
             </div>
         </div>
-        <div id='topbar-status-slot'></div>
-    </div>
+        <span class='topbar-meta'>BTC / USD</span>
+    </header>
     """, unsafe_allow_html=True)
 with refresh_col:
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     if st.session_state.dashboard_started:
-        button_label = "Refresh Data"
-        button_help  = "Paksa ambil ulang data harga/sentimen/on-chain terbaru, bypass cache 1 jam"
+        st.button("Refresh Data", use_container_width=True, on_click=start_dashboard,
+                  help="Ambil ulang data dan jalankan model tanpa menunggu cache 1 jam.")
     else:
-        button_label = "Muat & Jalankan Model"
-        button_help  = "Ambil data harga/sentimen/on-chain lalu jalankan model prediksi"
-    if st.button(button_label, use_container_width=True, help=button_help):
-        if st.session_state.dashboard_started:
-            # Ini penekanan ke-2+ (refresh) -> paksa bypass cache 1 jam.
-            st.cache_data.clear()
-        st.session_state.dashboard_started = True
-        st.rerun()
+        st.markdown("<div class='topbar-meta' style='text-align:right'>UGM</div>",
+                    unsafe_allow_html=True)
+st.markdown("<div class='masthead-rule'></div>", unsafe_allow_html=True)
 
-# ============================================================
-# GATE — jika model/pipeline belum pernah dijalankan di sesi ini,
-# tampilkan hanya topbar + ajakan klik tombol.
-# ============================================================
 if not st.session_state.dashboard_started:
+    intro, readiness = st.columns([1.45, 1], gap="large")
+    with intro:
+        st.markdown("""
+        <section class='welcome'>
+            <div class='eyebrow'>Prediksi 1 hari ke depan</div>
+            <h2>Prediksi Bitcoin, dengan<br>ukuran ketidakpastian.</h2>
+            <p>Amati estimasi harga, interval prediksi 90%, dan kondisi pasar
+            melalui model HMM, XGBoost Quantile, dan Conformal Prediction.</p>
+        </section>
+        """, unsafe_allow_html=True)
+        st.button("Muat & Jalankan Model", type="primary", on_click=start_dashboard,
+                  help="Mengambil data harga, sentimen, dan on-chain, lalu melatih model prediksi.")
+        st.caption("Data dan model baru diproses setelah tombol ditekan.")
+    with readiness:
+        st.markdown("""
+        <aside class='ready-panel' aria-label='Kesiapan sumber data'>
+            <h3>Sumber data</h3>
+            <p class='panel-caption'>Status ketersediaan diperiksa saat model dijalankan.</p>
+            <div class='source-row'><div><span class='source-name'>Harga Bitcoin</span>
+            <span class='source-detail'>Yahoo Finance · BTC-USD</span></div>
+            <span class='source-state'>Belum dimuat</span></div>
+            <div class='source-row'><div><span class='source-name'>Sentimen pasar</span>
+            <span class='source-detail'>Crypto Fear &amp; Greed Index</span></div>
+            <span class='source-state'>Belum dimuat</span></div>
+            <div class='source-row'><div><span class='source-name'>Aktivitas on-chain</span>
+            <span class='source-detail'>CoinMetrics · Exchange netflow</span></div>
+            <span class='source-state'>Belum dimuat</span></div>
+        </aside>
+        """, unsafe_allow_html=True)
     st.markdown(f"""
-    <div class='info-box' style='text-align:center; padding:56px 24px; margin-top:24px;'>
-        <div style='font-size:15px; color:{TEXT}; font-weight:600; margin-bottom:6px;'>
-            Dashboard belum dijalankan
-        </div>
-        <div style='color:{TEXT_DIM}; font-size:13.5px; max-width:480px; margin:0 auto;'>
-            Klik <b>Tombol Muat & Jalankan Model</b> untuk mengambil data harga, sentimen, 
-            dan on-chain terbaru, lalu menjalankan model prediksi probabilistik Bitcoin.
-        </div>
-    </div>
+    <section class='method-strip' aria-label='Alur model prediksi'>
+        <article class='method-step'><span class='method-index'>01</span><div>
+        <h3>Kenali kondisi pasar</h3><p>HMM mengidentifikasi regime Bear, Sideways,
+        atau Bull dari data historis.</p></div></article>
+        <article class='method-step'><span class='method-index'>02</span><div>
+        <h3>Estimasi rentang harga</h3><p>XGBoost Quantile menghasilkan batas bawah,
+        median, dan batas atas prediksi.</p></div></article>
+        <article class='method-step'><span class='method-index'>03</span><div>
+        <h3>Kalibrasi interval</h3><p>Conformal Prediction menyesuaikan interval
+        dengan target cakupan 90%.</p></div></article>
+    </section>
     <div class='disclaimer-box'>
     {WARN_ICON}<b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
     Tugas Akhir Program Studi Teknologi Rekayasa Perangkat Lunak, Universitas Gadjah Mada.
     Prediksi yang ditampilkan <b>bukan merupakan nasihat investasi</b> dan tidak boleh
     dijadikan dasar keputusan finansial.
     </div>
+    <footer class='research-footer'><span>Huda Muhammad Nur · Sekolah Vokasi UGM</span>
+    <span>Penelitian Tugas Akhir · 2026</span></footer>
     """, unsafe_allow_html=True)
     st.stop()
 
@@ -1125,30 +730,15 @@ with st.spinner("Memuat data dan menjalankan model..."):
     try:
         result = build_features_and_predict()
         df_full = result["df"]
-        df_p, _price_source_ui, _price_fallback_reason_ui = fetch_price()
-        df_s, sent_real, _sent_fallback_reason_ui = fetch_sentiment()
-        df_o, onchain_live_flag, _onchain_fallback_reason_ui = fetch_onchain()
+        df_p    = fetch_price()
+        df_s, sent_real = fetch_sentiment()
+        df_o, onchain_live_flag = fetch_onchain()
         DATA_OK = True
     except Exception as e:
         DATA_OK = False
-        # ---- Fallback literasi untuk kegagalan FATAL (harga BTC gagal
-        # dari SEMUA sumber -- yfinance maupun CoinGecko) ----
-        st.markdown(f"""
-        <div class='fallback-box'>
-        {WARN_ICON}<b>Dashboard gagal memuat data harga Bitcoin.</b><br>
-        Detail teknis: <code>{e}</code><br><br>
-        <span style='font-size:12px;'>
-        Dashboard sudah mencoba dua sumber harga (Yahoo Finance, lalu
-        CoinGecko sebagai cadangan) dan keduanya gagal diakses --
-        kemungkinan ada gangguan koneksi jaringan dari server dashboard
-        itu sendiri. Data harga adalah satu-satunya sumber yang
-        <b>wajib tersedia</b> untuk menjalankan model, sehingga tidak ada
-        nilai pengganti yang dipakai di sini (berbeda dari data
-        sentimen/on-chain yang punya fallback nilai netral). Coba klik
-        <b>Refresh Data</b> beberapa saat lagi.
-        </span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.error("Data belum berhasil dimuat. Periksa koneksi, lalu tekan Refresh Data untuk mencoba lagi.")
+        with st.expander("Detail kendala pemuatan"):
+            st.code(str(e), language=None)
         st.stop()
 
 price_last_date   = result["last_date"]
@@ -1158,109 +748,17 @@ is_price_fresh = price_staleness_days <= 1
 onchain_stale_days = result["onchain_staleness_days"]
 is_onchain_fresh = result["onchain_live"] or (onchain_stale_days is not None and onchain_stale_days <= 1)
 
-# ---- Ambil alasan fallback (jika ada) untuk ditampilkan sebagai
-# banner literasi paling atas, sebelum status pill ----
-price_source            = result.get("price_source")
-price_fallback_reason   = result.get("price_fallback_reason")
-sent_fallback_reason    = result.get("sent_fallback_reason")
-onchain_fallback_reason = result.get("onchain_fallback_reason")
-
-# Label tampilan untuk sumber harga cadangan (dipakai di beberapa tempat)
-PRICE_SOURCE_LABELS = {"coingecko": "CoinGecko"}
-
-if price_source in PRICE_SOURCE_LABELS and price_fallback_reason:
-    # Ini BUKAN kegagalan -- harga tetap berhasil didapat, cuma dari
-    # sumber cadangan (CoinGecko). Dipakai warn-box (amber), bukan
-    # fallback-box (merah), supaya tidak disalahartikan sebagai data
-    # yang hilang.
-    _src_label = PRICE_SOURCE_LABELS[price_source]
-    st.markdown(f"""
-    <div class='warn-box'>
-    {WARN_ICON}<b>Sumber harga beralih ke cadangan ({_src_label}).</b><br>
-    {price_fallback_reason}
-    <br><br>
-    <span style='font-size:12px;'>
-    Harga BTC-USD tetap live, hanya
-    diambil dari penyedia berbeda.
-    </span>
-    </div>
-    """, unsafe_allow_html=True)
-elif price_source == "yfinance" and price_fallback_reason:
-    # Kasus: yfinance tetap dipakai (cadangan tidak membantu), tapi
-    # tetap tampilkan alasan teknisnya (termasuk kalau CoinGecko gagal)
-    # supaya kegagalan sumber cadangan tidak hilang diam-diam --
-    # berguna untuk debugging kalau ternyata SEHARUSNYA bisa beralih.
-    with st.expander("Detail"):
-        st.caption(price_fallback_reason)
-
-status_col0, status_col1, status_col2 = st.columns([1, 1, 1])
-with status_col0:
-    if price_source in PRICE_SOURCE_LABELS:
-        _src_label = PRICE_SOURCE_LABELS[price_source]
-        st.markdown(f"<span class='status-pill status-live'><span class='dot'></span>Harga via {_src_label}</span>",
-                    unsafe_allow_html=True)
-    elif is_price_fresh:
-        st.markdown("<span class='status-pill status-live'><span class='dot'></span>Harga Up-to-date</span>",
-                    unsafe_allow_html=True)
-    else:
-        st.markdown(
-            f"<span class='status-pill status-stale'><span class='dot'></span>Harga tertinggal {price_staleness_days} hari</span>",
-            unsafe_allow_html=True)
-with status_col1:
-    if onchain_fallback_reason:
-        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>On-chain gagal (fallback 0)</span>",
-                    unsafe_allow_html=True)
-    elif is_onchain_fresh:
-        st.markdown("<span class='status-pill status-live'><span class='dot'></span>On-chain Live</span>",
-                    unsafe_allow_html=True)
-    else:
-        st.markdown(f"<span class='status-pill status-stale'><span class='dot'></span>On-chain tertinggal {onchain_stale_days} hari</span>",
-                    unsafe_allow_html=True)
-with status_col2:
-    if sent_fallback_reason:
-        st.markdown("<span class='status-pill status-stale'><span class='dot'></span>Sentimen gagal (fallback netral)</span>",
-                    unsafe_allow_html=True)
-    else:
-        st.markdown("<div></div>", unsafe_allow_html=True)
-
-st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-
-with st.expander("Tentang dashboard ini"):
-    st.markdown(f"""
-    <div class='info-box' style='margin-top:0'>
-    <b>Sumber data:</b><br>
-    • Harga: Yahoo Finance (utama) → CoinGecko (cadangan, dipilih otomatis jika Yahoo Finance gagal atau datanya tertinggal)<br>
-    • Sentimen: Crypto Fear & Greed Index<br>
-    • On-Chain: CoinMetrics<br><br>
-    <b>Model yang berjalan live di dashboard ini:</b><br>
-    HMM Regime-Switching + XGBoost Quantile + Conformal Prediction.
-    <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-    Ini satu-satunya model yang dihitung ulang secara live untuk halaman prediksi saja. Semua model, dari model
-    pembanding hingga usulan pada halaman "Komparasi Model" adalah referensi statis
-    dari notebook eksperimen terpisah, bukan hasil live.
-    </span><br><br>
-    <b>Apa yang terjadi jika sumber data gagal diambil?</b><br>
-    <span style='font-size:11.5px;color:{TEXT_MUTE}'>
-    • <b>Harga</b>: coba Yahoo Finance dulu; jika gagal atau datanya
-    tertinggal, dashboard mencoba CoinGecko sebagai cadangan lalu
-    memakai yang candle terakhirnya paling baru. Harga tetap wajib
-    tersedia dari salah satu dari keduanya -- jika keduanya gagal,
-    dashboard berhenti dan menampilkan keterangan error, karena tidak ada
-    nilai pengganti yang wajar untuk harga.<br>
-    • <b>Sentimen (Fear & Greed)</b>: jika API gagal diakses, dashboard tetap
-    berjalan memakai nilai netral (polarity = 0) dan menampilkan banner
-    merah di bagian atas halaman.<br>
-    • <b>On-chain (CoinMetrics)</b>: punya dua lapis fallback (API live →
-    CSV Community). Jika kedua-duanya gagal, dashboard tetap berjalan
-    memakai netflow = 0 dan menampilkan banner merah serupa.
-    </span>
-    </div>
-    <div class='disclaimer-box'>
-    {WARN_ICON}<b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
-    akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa
-    Perangkat Lunak, Universitas Gadjah Mada.
-    </div>
-    """, unsafe_allow_html=True)
+price_status = "Harga up-to-date" if is_price_fresh else f"Harga tertinggal {price_staleness_days} hari"
+chain_status = "On-chain live" if is_onchain_fresh else f"On-chain tertinggal {onchain_stale_days} hari"
+st.markdown(f"""
+<div class='data-status' aria-label='Kesegaran data'>
+    <span class='status-pill {"status-live" if is_price_fresh else "status-stale"}'>
+    <span class='dot' aria-hidden='true'></span>{price_status}</span>
+    <span class='status-pill {"status-live" if is_onchain_fresh else "status-stale"}'>
+    <span class='dot' aria-hidden='true'></span>{chain_status}</span>
+    <span class='status-date'>Data acuan · {price_last_date.strftime('%d %b %Y')}</span>
+</div>
+""", unsafe_allow_html=True)
 
 tab_pred, tab_comp, tab_data = st.tabs(["Prediksi", "Komparasi Model", "Analisis Data"])
 
@@ -1270,61 +768,10 @@ tab_pred, tab_comp, tab_data = st.tabs(["Prediksi", "Komparasi Model", "Analisis
 with tab_pred:
     st.markdown("""
     <div class='page-header'>
-        <h2>Prediksi Probabilistik Harga Bitcoin</h2>
-        <p>Model usulan: HMM Regime-Switching · XGBoost Quantile · Conformal Prediction</p>
+        <h2>Prediksi harga Bitcoin</h2>
+        <p>Horizon 1 hari · HMM Regime-Switching + XGBoost Quantile + Conformal Prediction</p>
     </div>
     """, unsafe_allow_html=True)
-
-    if sent_fallback_reason:
-        render_fallback_box(
-            "Sentimen pasar tidak tersedia untuk prediksi ini.",
-            sent_fallback_reason,
-            "Prediksi di bawah dihitung dengan asumsi sentimen netral, bukan "
-            "kondisi Fear & Greed riil hari ini."
-        )
-
-    if onchain_fallback_reason:
-        render_fallback_box(
-            "Data on-chain tidak tersedia untuk prediksi ini.",
-            onchain_fallback_reason,
-            "Prediksi di bawah dihitung dengan asumsi tidak ada pergerakan "
-            "netflow bursa (netflow = 0), bukan aktivitas on-chain riil."
-        )
-
-    if not is_price_fresh and price_source not in PRICE_SOURCE_LABELS:
-        st.markdown(f"""
-        <div class='warn-box'>
-        {WARN_ICON}<b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
-        BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
-        <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
-        lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
-        tersebut, bukan hari ini. Klik tombol
-        <b>Refresh Data</b> di atas beberapa saat lagi untuk
-        mengecek ulang tanpa menunggu cache (1 jam) habis sendiri.
-        </div>
-        """, unsafe_allow_html=True)
-
-    if not is_onchain_fresh and not onchain_fallback_reason:
-        st.markdown(f"""
-        <div class='warn-box'>
-        {WARN_ICON}<b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
-        Community CSV) terakhir memiliki data riil pada
-        <b>{result['onchain_last_real_date'].strftime('%d %B %Y')}</b>
-        ({onchain_stale_days} hari lalu). Fitur netflow pada prediksi ini
-        menggunakan nilai historis terakhir yang tersedia (forward-fill),
-        sehingga tidak mencerminkan aktivitas bursa terkini. Fitur harga dan
-        sentimen tetap diperbarui real-time.
-        <br><br>
-        <span style='font-size:11px;color:{TEXT_DIM}'>
-        <b style='color:{AMBER}'>Sudah divalidasi:</b> simulasi kuantitatif pada
-        data historis (n=704, 8 titik cutoff) menunjukkan efek forward-fill
-        terhadap akurasi model <b>tidak signifikan secara statistik</b>
-        (p=0,2184) dan tidak menunjukkan tren memburuk seiring lamanya
-        staleness (p=0,604). Lihat halaman "Komparasi Model" →
-        "Validasi Kuantitatif Strategi Forward-Fill" untuk detail.
-        </span>
-        </div>
-        """, unsafe_allow_html=True)
 
     last_close  = result["last_close"]
     last_date   = result["last_date"]
@@ -1337,25 +784,78 @@ with tab_pred:
     last_netflow= result["last_netflow"]
 
     delta_pct = (pred_med - last_close) / last_close * 100
-    regime_label = {0:"🔴 Bear", 1:"⚪ Sideways", 2:"🟢 Bull"}[last_regime]
+    regime_label = REGIME_NAMES[last_regime]
+    regime_class = {0: "regime-bear", 1: "regime-side", 2: "regime-bull"}[last_regime]
+    delta_class = "delta-positive" if delta_pct >= 0 else "delta-negative"
+    st.markdown(f"""
+    <section class='forecast-strip' aria-label='Ringkasan prediksi Bitcoin'>
+        <div class='forecast-cell'>
+            <span class='metric-label'>Harga terakhir</span>
+            <div class='metric-number'>${last_close:,.0f}</div>
+            <span class='metric-foot'>Penutupan · {last_date.strftime('%d %b %Y')}</span>
+        </div>
+        <div class='forecast-cell forecast-primary'>
+            <span class='metric-label'>Prediksi median</span>
+            <div class='metric-number'>${pred_med:,.0f}</div>
+            <span class='metric-foot'><span class='{delta_class}'>{delta_pct:+.2f}%</span>
+            · {pred_date.strftime('%d %b %Y')}</span>
+        </div>
+        <div class='forecast-cell'>
+            <span class='metric-label'>Interval prediksi 90%</span>
+            <div class='metric-range'><span>${pred_lo:,.0f}</span><span class='range-separator'>s.d.</span><span>${pred_hi:,.0f}</span></div>
+            <span class='metric-foot'>Kuantil 5% sampai 95% · Terkalibrasi</span>
+        </div>
+        <div class='forecast-cell'>
+            <span class='metric-label'>Regime pasar</span>
+            <div class='metric-regime {regime_class}'>{regime_label}</div>
+            <span class='metric-foot'>Identifikasi HMM</span>
+        </div>
+    </section>
+    """, unsafe_allow_html=True)
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(f"Harga Terakhir ({last_date.strftime('%d %b %Y')})",
-                   f"${last_close:,.0f}")
-    with col2:
-        st.metric(
-            f"Prediksi {pred_date.strftime('%d %b %Y')}",
-            f"${pred_med:,.0f}",
-            delta=f"{delta_pct:+.2f}%"
-        )
-    with col3:
-        st.metric("Interval 90%", f"${pred_lo:,.0f} – ${pred_hi:,.0f}")
-    with col4:
-        st.metric("Regime Pasar", regime_label)
+    if not is_price_fresh:
+        st.markdown(f"""
+        <details class='warn-box'><summary>Harga acuan tertinggal {price_staleness_days} hari. Prediksi mengikuti candle terakhir.</summary>
+        <div class='notice-body'>{WARN_ICON}<b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
+        BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
+        <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
+        lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
+        tersebut, bukan hari ini. Ini biasanya terjadi karena Yahoo Finance
+        menutup candle harian instrumen crypto berdasarkan basis hari
+        <b>US Eastern</b> (jauh di belakang WIB), atau candle terbaru
+        memang belum di-publish sumbernya. Coba klik tombol
+        <b>Refresh Data</b> di kanan atas beberapa saat lagi untuk
+        mengecek ulang tanpa menunggu cache (1 jam) habis sendiri.
+        </div></details>
+        """, unsafe_allow_html=True)
 
-    st.markdown("<div class='section-label'>Grafik Prediksi vs Harga Aktual (Test Set)</div>",
-                unsafe_allow_html=True)
+    if not is_onchain_fresh:
+        st.markdown(f"""
+        <details class='warn-box'><summary>On-chain memakai forward-fill sejak {result['onchain_last_real_date'].strftime('%d %b %Y')}. Baca batasan data.</summary>
+        <div class='notice-body'>{WARN_ICON}<b>Data on-chain tidak real-time.</b> Sumber gratis (CoinMetrics
+        Community CSV) terakhir memiliki data riil pada
+        <b>{result['onchain_last_real_date'].strftime('%d %B %Y')}</b>
+        ({onchain_stale_days} hari lalu). Fitur netflow pada prediksi ini
+        menggunakan nilai historis terakhir yang tersedia (forward-fill),
+        sehingga tidak mencerminkan aktivitas bursa terkini. Fitur harga dan
+        sentimen tetap diperbarui real-time.
+        <br><br>
+        <span style='font-size:12px;color:{TEXT_DIM}'>
+        <b style='color:{AMBER}'>Batas bukti validasi:</b> eksperimen historis
+        terbaru belum membuktikan bahwa forward-fill aman atau setara dengan
+        data aktual. Hasil dan keterbatasannya tersedia di halaman "Komparasi Model" →
+        "Validasi Kuantitatif Strategi Forward-Fill" untuk detail.
+        </span>
+        </div></details>
+        """, unsafe_allow_html=True)
+
+    chart_title, chart_control = st.columns([3, 1], vertical_alignment="bottom")
+    with chart_title:
+        st.markdown("<div class='section-label'>Prediksi & harga aktual</div>", unsafe_allow_html=True)
+        st.caption("Hasil pada test set · Area berarsir menunjukkan interval prediksi 90%.")
+    with chart_control:
+        chart_period = st.selectbox("Rentang grafik", ["90 hari terakhir", "30 hari terakhir", "Seluruh test set"],
+                                   key="forecast_period", label_visibility="collapsed")
 
     dates_test = result["df_test"].index
     hist_true  = result["hist_true"]
@@ -1388,7 +888,7 @@ with tab_pred:
     fig.add_trace(go.Scatter(
         x=[pred_date], y=[pred_med],
         mode="markers", name=f"Prediksi {pred_date.strftime('%d %b')}",
-        marker=dict(color=ACCENT, size=12, symbol="star"),
+        marker=dict(color=ACCENT, size=9, symbol="circle", line=dict(color=SURFACE, width=2)),
         error_y=dict(
             type="data", symmetric=False,
             array=[pred_hi - pred_med],
@@ -1397,44 +897,43 @@ with tab_pred:
         )
     ))
     fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor=BG,
-        plot_bgcolor=BG,
-        font=dict(color=TEXT, family="-apple-system, Inter, sans-serif"),
-        height=420,
-        margin=dict(l=0, r=0, t=10, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, font=dict(color=TEXT_DIM)),
-        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
-        xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
-        hovermode="x unified"
+        template="plotly_white", height=400,
+        margin=dict(l=20, r=24, t=55, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0,
+                    font=dict(color=TEXT_DIM, size=11)),
+        yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID, side="right", nticks=6),
+        xaxis=dict(showgrid=False, tickformat="%d %b", nticks=6),
+        hovermode="x unified",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    if chart_period != "Seluruh test set":
+        window_days = 90 if chart_period == "90 hari terakhir" else 30
+        fig.update_xaxes(range=[pred_date - timedelta(days=window_days), pred_date + timedelta(days=2)])
+    fig.update_traces(hovertemplate="%{y:$,.0f}<extra>%{fullData.name}</extra>", selector=dict(mode="lines"))
+    render_chart(fig)
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown("<div class='section-label'>Detail Prediksi Besok</div>",
+        st.markdown("<div class='section-label'>Detail prediksi berikutnya</div>",
                     unsafe_allow_html=True)
         width_pct = (pred_hi - pred_lo) / pred_med * 100
         st.markdown(f"""
-        <div class='info-box'>
-        <b>Tanggal prediksi:</b> {pred_date.strftime('%A, %d %B %Y')}<br>
-        <b>Harga acuan ({last_date.strftime('%d %b %Y')}):</b> ${last_close:,.0f}<br>
-        <b>Prediksi median:</b> ${pred_med:,.0f}
-        &nbsp;(<span style='color:{GREEN if delta_pct>=0 else RED}'>{delta_pct:+.2f}%</span>)<br>
-        <b>Interval bawah (5%):</b> ${pred_lo:,.0f}<br>
-        <b>Interval atas (95%):</b> ${pred_hi:,.0f}<br>
-        <b>Lebar interval:</b> ${pred_hi-pred_lo:,.0f} ({width_pct:.1f}% dari median)<br>
-        <b>Conformal margin:</b> {result["conf_margin"]:.5f} (log-scale)<br>
-        <br>
-        <span style='color:{TEXT_MUTE};font-size:11px'>
-        Interval 90% berarti 90% dari waktu, harga aktual diharapkan
-        jatuh di antara batas bawah dan atas. Bukan jaminan.
-        </span>
-        </div>
+        <section class='detail-panel' aria-label='Detail prediksi'>
+        <dl>
+        <div class='detail-row'><dt>Tanggal prediksi</dt><dd>{pred_date.strftime('%d %B %Y')}</dd></div>
+        <div class='detail-row'><dt>Harga acuan · {last_date.strftime('%d %b')}</dt><dd>${last_close:,.0f}</dd></div>
+        <div class='detail-row'><dt>Prediksi median</dt><dd>${pred_med:,.0f} <span class='{delta_class}'>({delta_pct:+.2f}%)</span></dd></div>
+        <div class='detail-row'><dt>Batas bawah · Q05</dt><dd>${pred_lo:,.0f}</dd></div>
+        <div class='detail-row'><dt>Batas atas · Q95</dt><dd>${pred_hi:,.0f}</dd></div>
+        <div class='detail-row'><dt>Lebar interval</dt><dd>${pred_hi-pred_lo:,.0f} · {width_pct:.1f}%</dd></div>
+        <div class='detail-row'><dt>Conformal margin</dt><dd>{result["conf_margin"]:.5f} <small>(log-scale)</small></dd></div>
+        </dl>
+        <p class='detail-note'>Target cakupan interval adalah 90% dalam jangka panjang.
+        Harga aktual tetap dapat berada di luar rentang ini.</p>
+        </section>
         """, unsafe_allow_html=True)
 
     with col_b:
-        st.markdown("<div class='section-label'>Kondisi Pasar Hari Ini</div>",
+        st.markdown("<div class='section-label'>Kondisi pasar pada data acuan</div>",
                     unsafe_allow_html=True)
         sent_label = (
             "Extreme Greed" if last_sent > 0.6 else
@@ -1454,34 +953,30 @@ with tab_pred:
             2: "Bull — tren naik, return positif dominan"
         }[last_regime]
         netflow_caption = (
-            "(nilai fallback 0 — on-chain gagal diambil, lihat peringatan di atas)"
-            if onchain_fallback_reason else
             "(nilai historis terakhir — on-chain belum live, lihat peringatan di atas)"
             if not is_onchain_fresh else ""
         )
-        sent_caption = (
-            " (nilai fallback netral — sentimen gagal diambil, lihat peringatan di atas)"
-            if sent_fallback_reason else ""
-        )
         st.markdown(f"""
-        <div class='info-box'>
-        <b>Regime HMM:</b> {regime_label}<br>
-        <span style='font-size:12px;color:{TEXT_MUTE}'>{regime_desc}</span><br><br>
-        <b>Sentimen pasar:</b>
-        <span style='color:{sent_color}'>{sent_label}</span>
-        (skor: {last_sent:.2f})
-        <span style='font-size:11px;color:{AMBER}'>{sent_caption}</span><br><br>
-        <b>On-chain netflow:</b>
-        {last_netflow:+,.0f} BTC
-        <span style='font-size:11px;color:{AMBER}'>{netflow_caption}</span><br>
-        <span style='font-size:12px;color:{TEXT_MUTE}'>
-        {"Lebih banyak BTC keluar bursa → potensi akumulasi (bullish)" if last_netflow < 0
-         else "Lebih banyak BTC masuk bursa → potensi tekanan jual (bearish)"}
-        </span><br><br>
-        <b>Netflow terbobot sentimen:</b>
-        {last_netflow * (1 + last_sent):+,.0f}
-        <span style='font-size:11px;color:{TEXT_MUTE}'>(fitur usulan TA)</span>
+        <section class='detail-panel' aria-label='Kondisi pasar'>
+        <div class='market-item'>
+            <div class='market-heading'><span>Regime HMM</span><strong class='{regime_class}'>{regime_label}</strong></div>
+            <p>{regime_desc}</p>
         </div>
+        <div class='market-item'>
+            <div class='market-heading'><span>Sentimen pasar</span><strong style='color:{sent_color}'>{sent_label}</strong></div>
+            <p>Skor polaritas <span class='tnum'>{last_sent:+.2f}</span> pada skala −1 hingga +1.</p>
+        </div>
+        <div class='market-item'>
+            <div class='market-heading'><span>On-chain netflow</span><strong>{last_netflow:+,.0f} BTC</strong></div>
+            <p>{"Lebih banyak BTC keluar bursa → potensi akumulasi (bullish)" if last_netflow < 0
+                else "Lebih banyak BTC masuk bursa → potensi tekanan jual (bearish)"}</p>
+            <p style='color:{AMBER}'>{netflow_caption}</p>
+        </div>
+        <div class='market-item'>
+            <div class='market-heading'><span>Netflow terbobot sentimen</span><strong>{last_netflow * (1 + last_sent):+,.0f}</strong></div>
+            <p>Fitur usulan · Netflow × (1 + polarity)</p>
+        </div>
+        </section>
         """, unsafe_allow_html=True)
 
     st.markdown(f"""
@@ -1533,7 +1028,8 @@ with tab_comp:
     df_res = pd.DataFrame(results_data)
 
     st.markdown(f"""
-    <div class='info-box'>
+    <details class='info-box'><summary>Referensi eksperimen statis · 387 data uji · 27 Apr 2025 – 18 Mei 2026</summary>
+    <div class='notice-body'>
     Angka pada tabel dan grafik di bawah ini adalah hasil evaluasi pada
     <b>test set n=387</b> (27 Apr 2025 &ndash; 18 Mei 2026), dijalankan pada
     notebook eksperimen Google Colab dengan tanggal data dikunci
@@ -1544,7 +1040,7 @@ with tab_comp:
     dashboard ini setiap kali data terbaru diambil &mdash; lihat halaman
     "Prediksi" untuk hasil live tersebut. Lihat kolom
     <b>Sumber</b> pada tabel untuk penanda ini.
-    </div>
+    </div></details>
     """, unsafe_allow_html=True)
 
     st.markdown("<div class='section-label'>Tabel 4.1 — Hasil Evaluasi Model</div>",
@@ -1613,31 +1109,13 @@ with tab_comp:
         """)
 
     with st.expander("Validasi Kuantitatif Strategi Forward-Fill"):
-        st.markdown("""
-        Untuk menguji apakah forward-fill data on-chain (dipakai saat sumber
-        gratis tertinggal, lihat peringatan di halaman "Prediksi") aman
-        digunakan, dilakukan simulasi TRUE (data riil) vs STALE (forward-fill)
-        pada 8 titik cutoff historis (n=704 baris total, jendela staleness
-        88 hari — gap riil sejak CoinMetrics Community tier berhenti live).
-
-        - Efek staleness terhadap MAE **tidak signifikan** secara keseluruhan:
-          diff = +$10,38, CI95% [−6,41; +26,67], **p = 0,2184**.
-        - Tidak ada tren memburuk yang konsisten seiring lamanya staleness:
-          slope regresi +0,185 USD/hari, CI95% [−0,453; +0,878], **p = 0,604**.
-
-        **Kesimpulan:** strategi forward-fill pada dashboard ini terbukti
-        cukup aman — model tidak kehilangan akurasi yang signifikan secara
-        statistik walau fitur netflow tidak live. Ini menjadi justifikasi
-        kuantitatif bagi desain badge kesegaran data biner (Live / Tertinggal
-        N hari) yang dipakai pada bagian atas halaman, tanpa perlu tingkatan
-        keparahan bertahap berdasarkan lama staleness.
-        """)
+        render_report(st)
 
     st.markdown("<div class='section-label'>Visualisasi Metrik</div>",
                 unsafe_allow_html=True)
     tab1, tab2, tab3 = st.tabs(["MAE & MAPE", "R² & DirAcc", "Probabilistik"])
 
-    bar_colors = ["#c7c7cc"]*5 + [ACCENT]
+    bar_colors = ["#aab4bf"]*5 + [ACCENT]
 
     with tab1:
         col1, col2 = st.columns(2)
@@ -1656,7 +1134,7 @@ with tab_comp:
                 xaxis=dict(tickprefix="$", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
-            st.plotly_chart(fig_mae, use_container_width=True)
+            render_chart(fig_mae)
         with col2:
             fig_mape = go.Figure(go.Bar(
                 y=df_res["Model"], x=df_res["MAPE"],
@@ -1672,7 +1150,7 @@ with tab_comp:
                 xaxis=dict(ticksuffix="%", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
-            st.plotly_chart(fig_mape, use_container_width=True)
+            render_chart(fig_mape)
 
     with tab2:
         col1, col2 = st.columns(2)
@@ -1692,7 +1170,7 @@ with tab_comp:
                            gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
-            st.plotly_chart(fig_r2, use_container_width=True)
+            render_chart(fig_r2)
         with col2:
             fig_dir = go.Figure(go.Bar(
                 y=df_res["Model"], x=df_res["DirAcc"],
@@ -1701,7 +1179,7 @@ with tab_comp:
             ))
             fig_dir.add_vline(x=50, line_dash="dash", line_color=TEXT_DIM)
             fig_dir.update_layout(
-                title=dict(text="Directional Accuracy — lebih tinggi lebih baik", font=dict(color=TEXT, size=14)),
+                title=dict(text="Directional Accuracy (%)", font=dict(color=TEXT, size=14)),
                 template="plotly_white", paper_bgcolor=BG,
                 plot_bgcolor=BG, height=320,
                 font=dict(color=TEXT),
@@ -1709,7 +1187,7 @@ with tab_comp:
                 xaxis=dict(ticksuffix="%", range=[40,60], gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
                 yaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT))
             )
-            st.plotly_chart(fig_dir, use_container_width=True)
+            render_chart(fig_dir)
             st.caption("Garis putus-putus abu-abu menandai baseline tebak acak (50%).")
 
     with tab3:
@@ -1749,7 +1227,7 @@ with tab_comp:
             font=dict(color=TEXT),
             height=280, margin=dict(t=40,b=0,l=0,r=0)
         )
-        st.plotly_chart(fig_cov, use_container_width=True)
+        render_chart(fig_cov)
 
 # ============================================================
 # HALAMAN 3: ANALISIS DATA
@@ -1810,7 +1288,7 @@ with tab_data:
         xaxis2=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
         barmode="stack"
     )
-    st.plotly_chart(fig_price, use_container_width=True)
+    render_chart(fig_price)
 
     col_s, col_n = st.columns(2)
 
@@ -1837,18 +1315,14 @@ with tab_data:
                        ticktext=["Ext Fear","Fear","Neutral","Greed","Ext Greed"]),
             xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
         )
-        if sent_fallback_reason:
-            st.warning(f"Sentimen: {sent_fallback_reason}")
-        elif not sent_real:
+        if not sent_real:
             st.warning("Sentimen: data sintetis (API tidak tersedia)")
-        st.plotly_chart(fig_sent, use_container_width=True)
+        render_chart(fig_sent)
 
     with col_n:
         st.markdown("<div class='section-label'>On-Chain — Exchange Netflow</div>",
                     unsafe_allow_html=True)
-        if onchain_fallback_reason:
-            st.warning(f"On-chain: {onchain_fallback_reason}")
-        elif not is_onchain_fresh:
+        if not is_onchain_fresh:
             st.warning(
                 f"Data on-chain historis terakhir: "
                 f"{result['onchain_last_real_date'].strftime('%d %b %Y')}. "
@@ -1865,9 +1339,7 @@ with tab_data:
             name="Netflow"
         ))
         fig_nf.add_hline(y=0, line_dash="dash", line_color=TEXT_MUTE)
-        if (not is_onchain_fresh and not onchain_fallback_reason
-                and result["onchain_last_real_date"] is not None
-                and result["onchain_last_real_date"] >= cutoff):
+        if not is_onchain_fresh and result["onchain_last_real_date"] >= cutoff:
             last_real_dt = result["onchain_last_real_date"].to_pydatetime()
             fig_nf.add_shape(
                 type="line", xref="x", yref="paper",
@@ -1887,7 +1359,7 @@ with tab_data:
             yaxis=dict(title="Netflow (BTC)", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
             xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
         )
-        st.plotly_chart(fig_nf, use_container_width=True)
+        render_chart(fig_nf)
 
     st.markdown("<div class='section-label'>Fitur Usulan — Sentiment-Weighted Netflow</div>",
                 unsafe_allow_html=True)
@@ -1915,7 +1387,7 @@ with tab_data:
         yaxis=dict(title="BTC", gridcolor=GRID, tickfont=dict(color=TEXT_DIM)),
         xaxis=dict(gridcolor=GRID, tickfont=dict(color=TEXT_DIM))
     )
-    st.plotly_chart(fig_nfw, use_container_width=True)
+    render_chart(fig_nfw)
     st.markdown(f"""
     <div class='info-box'>
     <b>Fitur Usulan — Sentiment-Weighted Netflow</b>: Netflow on-chain dikalikan
@@ -1925,3 +1397,30 @@ with tab_data:
     bursa saat panik berbeda maknanya dibanding perpindahan yang sama saat euforia.
     </div>
     """, unsafe_allow_html=True)
+
+with st.expander("Tentang dashboard ini"):
+    st.markdown(f"""
+    <div class='info-box' style='margin-top:0'>
+    <b>Sumber data:</b><br>
+    • Harga: Yahoo Finance<br>
+    • Sentimen: Crypto Fear & Greed Index<br>
+    • On-Chain: CoinMetrics<br><br>
+    <b>Model yang berjalan live di dashboard ini:</b><br>
+    HMM Regime-Switching + XGBoost Quantile + Conformal Prediction.
+    <span style='font-size:12px;color:{TEXT_MUTE}'>
+    Ini satu-satunya model yang dihitung ulang secara live untuk halaman prediksi saja. Semua model, dari model
+    pembanding hingga usulan pada halaman "Komparasi Model" adalah referensi statis
+    dari notebook eksperimen terpisah, bukan hasil live.
+    </span>
+    </div>
+    <div class='disclaimer-box'>
+    {WARN_ICON}<b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
+    akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa
+    Perangkat Lunak, Universitas Gadjah Mada.
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("""
+<footer class='research-footer'><span>Huda Muhammad Nur · Sekolah Vokasi UGM</span>
+<span>Penelitian Tugas Akhir · 2026</span></footer>
+""", unsafe_allow_html=True)

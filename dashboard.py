@@ -69,7 +69,7 @@ FEATURE_COLS = [
     "exchange_netflow", "netflow_change", "netflow_ma_7", "polarity",
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
-CORE_VERSION = "2026.10.08-singlefile-v3"
+CORE_VERSION = "2026.10.08-singlefile-v4"
 
 
 def filter_hmm(model, observations):
@@ -390,7 +390,12 @@ def render_experiments(render_table, render_chart, accent):
     </details>
     """, unsafe_allow_html=True)
     st.markdown("<div class='section-label'>Hasil Evaluasi Model</div>", unsafe_allow_html=True)
-    render_table(display_metrics(main_comparison_frame(primary)), label="Hasil evaluasi utama · raw kausal")
+    main = main_comparison_frame(primary)[["Model"] + METRICS[:7]]
+    render_table(display_metrics(main).rename(columns={
+        "R2": "R²", "DirAcc": "Akurasi arah", "Coverage": "Cakupan", "AvgWidth": "Lebar rentang",
+    }), label="Hasil evaluasi utama · raw kausal")
+    st.caption("MAE, RMSE, dan MAPE mengukur kesalahan prediksi; nilai lebih kecil berarti kesalahan lebih rendah. "
+               "Cakupan dan lebar rentang tersedia untuk Model Usulan.")
 
     # The main analysis uses the fixed block-14 protocol; no experiment selector.
     with st.expander("Uji Signifikansi Statistik (stationary bootstrap, N=20000, Holm15, CI 95%)"):
@@ -405,6 +410,156 @@ def render_experiments(render_table, render_chart, accent):
 
     render_metric_charts(primary, render_chart, accent)
 
+
+def render_prediction(result, render_chart):
+    """Put the forecast first and retain technical context below the chart."""
+    last_close, last_date = result["last_close"], result["last_date"]
+    pred_med, pred_lo, pred_hi = result["pred_med"], result["pred_lo"], result["pred_hi"]
+    pred_date = result["pred_date"]
+    delta_pct = (pred_med - last_close) / last_close * 100
+    delta_class = "delta-positive" if delta_pct >= 0 else "delta-negative"
+    regime = int(result["last_regime"])
+    regime_name = REGIME_NAMES[regime]
+    regime_class = {0: "regime-bear", 1: "regime-side", 2: "regime-bull"}[regime]
+    regime_help = {0: "Kondisi pasar melemah", 1: "Pergerakan relatif mendatar", 2: "Kondisi pasar menguat"}[regime]
+    width = pred_hi - pred_lo
+    median_position = 50 if width == 0 else min(100, max(0, (pred_med - pred_lo) / width * 100))
+    price_age = (pd.Timestamp(datetime.now(timezone.utc).date()) - pd.Timestamp(last_date.date())).days
+    chain_age = result["onchain_staleness_days"]
+    metadata = result["pipeline_metadata"]
+    last_delta = metadata.get("hmm_last_delta")
+    st.markdown(f"""
+    <header class='page-header'>
+        <h2>Prediksi harga Bitcoin</h2>
+        <p>Estimasi harga dan rentang prediksi untuk {format_date_id(pred_date)}.</p>
+    </header>
+    <section class='forecast-overview' aria-label='Ringkasan prediksi Bitcoin'>
+        <div class='forecast-main'>
+            <div class='estimate'>
+                <span class='metric-label'>Estimasi harga · {format_date_id(pred_date)}</span>
+                <div class='estimate-number'>${pred_med:,.0f}</div>
+                <div class='estimate-change'><span class='{delta_class}'>{delta_pct:+.2f}%</span> dari harga terakhir</div>
+            </div>
+            <div class='estimate-range'>
+                <span class='metric-label'>Rentang prediksi · target cakupan 90%</span>
+                <div class='range-number'><span>${pred_lo:,.0f}</span><span class='range-separator'>s.d.</span><span>${pred_hi:,.0f}</span></div>
+                <div class='range-scale' aria-hidden='true'><span class='range-end'></span><span class='range-track' style='--median-position:{median_position:.2f}%'></span><span class='range-end'></span></div>
+                <span class='metric-foot'>Harga aktual dapat berada di luar rentang ini.</span>
+            </div>
+        </div>
+        <div class='forecast-context'>
+            <div><span>Harga terakhir</span><strong>${last_close:,.0f}</strong></div>
+            <div><span>Data acuan</span><strong>{format_date_id(last_date)}</strong></div>
+            <div class='regime-context'><span>Regime pasar</span><strong class='{regime_class}'>{regime_name}</strong></div>
+        </div>
+    </section>
+    """, unsafe_allow_html=True)
+
+    if price_age > 1:
+        st.markdown(f"""
+        <details class='warn-box'><summary>Harga acuan tertinggal {price_age} hari.</summary>
+        <div class='notice-body'>Prediksi mengikuti harga penutupan terakhir, {format_date_id(last_date)}.
+        Tekan <b>Refresh Data</b> untuk memeriksa ketersediaan harga yang lebih baru.</div></details>
+        """, unsafe_allow_html=True)
+    if chain_age > 1:
+        st.markdown(f"""
+        <details class='warn-box'><summary>Data on-chain memakai catatan terakhir {format_date_id(result['onchain_last_real_date'])}.</summary>
+        <div class='notice-body'>Nilai netflow tertinggal {chain_age} hari dari harga acuan dan diteruskan
+        dari observasi terakhir (forward-fill). Nilai tersebut tidak menggambarkan aktivitas bursa terbaru.
+        Hasil pengujian historis belum mengukur akurasi prediksi dalam kondisi ini.</div></details>
+        """, unsafe_allow_html=True)
+    if last_delta is not None and last_delta < 0:
+        st.markdown("<div class='model-caution'>"
+                    + WARN_ICON + "Ada catatan pada pelatihan model. Baca penjelasannya di bagian Informasi model."
+                    + "</div>", unsafe_allow_html=True)
+
+    heading, control = st.columns([3, 1], vertical_alignment="bottom")
+    with heading:
+        st.markdown("<div class='section-label'>Harga aktual & estimasi</div>", unsafe_allow_html=True)
+        st.caption("Area oranye menunjukkan rentang prediksi. Garis putus-putus menunjukkan estimasi harga.")
+    with control:
+        period = st.selectbox("Rentang grafik", ["90 hari terakhir", "30 hari terakhir", "Seluruh test set"],
+                              key="forecast_period", label_visibility="collapsed")
+    dates = pd.DatetimeIndex(result["hist_target_dates"])
+    actual, med, low, high = (result[name] for name in ["hist_true", "hist_med", "hist_lo", "hist_hi"])
+    n = min(len(dates), len(actual), len(med), len(low), len(high))
+    dates = dates[:n]
+    chart = go.Figure()
+    chart.add_trace(go.Scatter(x=list(dates) + list(dates[::-1]),
+        y=list(high[:n]) + list(low[:n][::-1]), fill="toself", fillcolor=TEAL_SOFT,
+        line=dict(color="rgba(0,0,0,0)"), name="Rentang 90%", hoverinfo="skip"))
+    chart.add_trace(go.Scatter(x=dates, y=actual[:n], mode="lines", name="Harga aktual",
+        line=dict(color=TEXT, width=1.7)))
+    chart.add_trace(go.Scatter(x=dates, y=med[:n], mode="lines", name="Estimasi harga",
+        line=dict(color="#b36a15", width=1.6, dash="dash")))
+    chart.add_trace(go.Scatter(x=[pred_date], y=[pred_med], mode="markers",
+        name=f"Estimasi {pred_date.strftime('%d %b')}", showlegend=False,
+        marker=dict(color="#b36a15", size=8, line=dict(color=SURFACE, width=2))))
+    chart.add_trace(go.Scatter(x=[pred_date, pred_date], y=[pred_lo, pred_hi], mode="lines",
+        name="Rentang prediksi berikutnya", showlegend=False, line=dict(color="#b36a15", width=2.5)))
+    chart.update_layout(template="plotly_white", height=360,
+        margin=dict(l=16, r=24, t=52, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, x=0, font=dict(size=11)),
+        yaxis=dict(tickprefix="$", tickformat=",", side="right", nticks=5),
+        xaxis=dict(showgrid=False, tickformat="%d %b", nticks=5), hovermode="x unified")
+    if period != "Seluruh test set":
+        days = 90 if period == "90 hari terakhir" else 30
+        chart.update_xaxes(range=[pred_date - timedelta(days=days), pred_date + timedelta(days=2)])
+    chart.update_traces(hovertemplate="%{y:$,.0f}<extra>%{fullData.name}</extra>", selector=dict(mode="lines"))
+    render_chart(chart)
+    st.caption("Grafik memakai tanggal harga yang diprediksi. Hasil perhitungan ini terpisah dari evaluasi pada tab Komparasi Model.")
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("<div class='section-label'>Memahami rentang prediksi</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <section class='detail-panel' aria-label='Detail rentang prediksi'>
+        <dl>
+            <div class='detail-row'><dt>Batas bawah</dt><dd>${pred_lo:,.0f}</dd></div>
+            <div class='detail-row'><dt>Estimasi tengah (median)</dt><dd>${pred_med:,.0f}</dd></div>
+            <div class='detail-row'><dt>Batas atas</dt><dd>${pred_hi:,.0f}</dd></div>
+            <div class='detail-row'><dt>Lebar rentang</dt><dd>${width:,.0f} · {width / pred_med * 100:.1f}% dari estimasi</dd></div>
+        </dl>
+        <p class='detail-note'>Rentang yang lebih lebar menunjukkan ketidakpastian model yang lebih besar.
+        Target cakupan 90% tidak menjamin setiap harga aktual masuk ke dalam rentang.</p>
+        </section>
+        """, unsafe_allow_html=True)
+    with right:
+        st.markdown("<div class='section-label'>Kondisi pasar pada data acuan</div>", unsafe_allow_html=True)
+        polarity, netflow = result["last_sent"], result["last_netflow"]
+        sentiment = ("Extreme Greed" if polarity > .6 else "Greed" if polarity > .2
+                     else "Neutral" if polarity > -.2 else "Fear" if polarity > -.6 else "Extreme Fear")
+        direction = "Arus keluar bersih dari bursa" if netflow > 0 else "Arus masuk bersih ke bursa" if netflow < 0 else "Arus bursa seimbang"
+        chain_context = f"Catatan terakhir {format_date_id(result['onchain_last_real_date'])}." if chain_age > 1 else "Data on-chain tersedia hingga tanggal acuan."
+        st.markdown(f"""
+        <section class='detail-panel' aria-label='Kondisi pasar'>
+            <div class='market-item'><div class='market-heading'><span>Regime pasar</span><strong>{regime_name}</strong></div><p>{regime_help} berdasarkan klasifikasi model.</p></div>
+            <div class='market-item'><div class='market-heading'><span>Sentimen pasar</span><strong>{sentiment}</strong></div><p>Indeks Fear &amp; Greed · skor polaritas {polarity:+.2f}.</p></div>
+            <div class='market-item'><div class='market-heading'><span>Netflow bursa</span><strong>{netflow:+,.0f} BTC</strong></div><p>{direction}. {chain_context}</p></div>
+        </section>
+        """, unsafe_allow_html=True)
+
+    with st.expander("Informasi model"):
+        st.markdown("Estimasi memakai **HMM**, **XGBoost Quantile**, dan **Conformal Prediction** "
+                    "untuk memprediksi harga satu hari setelah tanggal data acuan.")
+        st.caption("HMM membaca kondisi pasar dengan raw filtering kausal. Model dilatih ulang saat data "
+                   "diperbarui. Data dan bobotnya dapat berbeda dari eksperimen historis di Colab.")
+        if last_delta is not None and last_delta < 0:
+            st.warning("Nilai likelihood HMM turun pada iterasi pelatihan terakhir. "
+                       "Hasil prediksi perlu dibaca bersama catatan numerik ini.")
+        st.caption("Interval dikalibrasi dengan target cakupan 90%; cakupan pada kondisi pasar baru dapat berbeda. "
+                   "Waktu publikasi intraday sumber belum diaudit.")
+        st.markdown(f"""
+        | Keterangan | Nilai |
+        |---|---|
+        | Data pelatihan | {metadata['train_n']:,} baris, hingga {metadata['train_end']} |
+        | Data kalibrasi | {metadata['calibration_n']:,} baris, hingga {metadata['calibration_end']} |
+        | Data uji internal | {metadata['test_n']:,} baris |
+        | Jeda pada batas data | {metadata['purge_days']} hari |
+        """)
+        st.caption(f"Versi dashboard {CORE_VERSION}. Metadata perhitungan tetap disimpan bersama hasil model.")
+    st.markdown("<div class='disclaimer-box'>Prototipe penelitian Tugas Akhir, Sekolah Vokasi UGM. "
+                "Prediksi merupakan estimasi model dan bukan nasihat investasi.</div>", unsafe_allow_html=True)
 
 def stretch_kwargs(widget):
     """Support both existing Streamlit >=1.40 and the tested 1.64 runtime."""
@@ -446,7 +601,7 @@ BORDER = "#dfe3e8"
 TEXT = "#202730"
 TEXT_DIM = "#586473"
 TEXT_MUTE = "#637080"
-ACCENT = "#f8a138"
+ACCENT = "#ee9b32"
 ACCENT_SOFT = "rgba(248,161,56,0.14)"
 # Forecasts use the same product accent; red/green only encode market states.
 TEAL = ACCENT
@@ -464,252 +619,213 @@ MONTHS_ID = ("Januari", "Februari", "Maret", "April", "Mei", "Juni",
 def format_date_id(value):
     return f"{value.day} {MONTHS_ID[value.month - 1]} {value.year}"
 
-st.markdown(f"""
+st.markdown("""
 <style>
-:root {{
-    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
-    color-scheme: light;
-}}
-html, body, .stApp {{ background:{BG}; color:{TEXT}; }}
-.stApp, button, input, select, textarea {{ font-family:var(--font-sans); }}
+/* Source stylesheet; embedded into dashboard.py at build time. */
+:root {
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  --ink: #202730;
+  --muted: #586473;
+  --line: #e1e5ea;
+  --orange-ink: #9e570e;
+  --orange: #ee9b32;
+  color-scheme: light;
+}
+html, body, .stApp { background: #f7f8fa; color: var(--ink); }
+.stApp, button, input, select, textarea { font-family: var(--font-sans); }
 [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"],
-[data-testid="stMetric"], [role="tab"] {{ font-family:var(--font-sans); }}
-h1, h2, h3, h4 {{ font-family:var(--font-sans); color:{TEXT}; }}
-[data-testid="stHeader"] {{ background:{BG}; }}
-[data-testid="stSidebar"], [data-testid="collapsedControl"] {{ display:none; }}
-.block-container {{ max-width:1320px; padding:4rem 3rem 3rem; }}
-[data-testid="stVerticalBlock"] {{ gap:1rem; }}
-[data-testid="stColumn"], [data-baseweb="tab-panel"] {{ min-width:0; }}
+[data-testid="stMetric"], [role="tab"] { font-family: var(--font-sans); }
+h1, h2, h3, h4 { font-family: var(--font-sans); color: var(--ink); text-wrap: balance; }
+[data-testid="stHeader"] { background: #f7f8fa; }
+[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none; }
+.block-container { max-width: 1240px; padding: 3.5rem 2.5rem 2rem; }
+[data-testid="stVerticalBlock"] { gap: .9rem; }
+[data-testid="stColumn"], [data-baseweb="tab-panel"] { min-width: 0; }
 [data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] li {{ color:{TEXT_DIM}; line-height:1.65; }}
-[data-testid="stMarkdownContainer"] strong {{ color:{TEXT}; }}
-[data-testid="stCaptionContainer"] {{ color:{TEXT_MUTE}; }}
-[data-testid="stCaptionContainer"] p {{ color:{TEXT_MUTE}; }}
-code, .stMarkdown code {{ color:{ACCENT}; background:{ACCENT_SOFT}; }}
-.tnum {{ font-variant-numeric:tabular-nums; }}
+[data-testid="stMarkdownContainer"] li { color: var(--muted); line-height: 1.65; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: var(--muted); }
+[data-testid="stMarkdownContainer"] strong { color: var(--ink); }
+code, .stMarkdown code { color: var(--orange-ink); background: #fff1df; }
+.tnum { font-variant-numeric: tabular-nums; }
 
-/* A quiet masthead, not another floating card. */
-.topbar {{ display:flex; align-items:center; justify-content:space-between;
-    gap:24px; min-height:48px; margin-bottom:0; }}
-.topbar-brand {{ display:flex; align-items:center; gap:13px; }}
-.topbar-coin {{ display:grid; place-items:center; width:40px; height:40px;
-    background:{ACCENT}; color:{TEXT}; border-radius:11px; font-size:27px; font-weight:600; }}
-.topbar-title h1 {{ font-size:19px; font-weight:650; letter-spacing:-.6px;
-    padding:0; margin:0; line-height:1.3; }}
-.topbar-title p {{ margin:3px 0 0; font-size:12px; color:{TEXT_DIM}; }}
-.topbar-meta {{ color:{TEXT_MUTE}; font:12px var(--font-mono); white-space:nowrap; }}
-.masthead-rule {{ height:1px; background:{BORDER}; margin:0 0 12px; }}
-.research-footer {{ display:flex; justify-content:space-between; flex-wrap:wrap;
-    gap:10px; padding-top:22px; border-top:1px solid {BORDER}; margin-top:24px;
-    color:{TEXT_MUTE}; font-size:12px; }}
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 46px; }
+.topbar-brand { display: flex; align-items: center; gap: 12px; }
+.topbar-coin { display: grid; place-items: center; width: 35px; height: 35px; background: var(--orange); color: #202730; border-radius: 9px; font-size: 24px; font-weight: 600; }
+.topbar-title h1 { font-size: 17px; font-weight: 650; letter-spacing: -.5px; padding: 0; margin: 0; line-height: 1.3; }
+.topbar-title p { margin: 2px 0 0; font-size: 12px; }
+.topbar-meta { color: var(--muted); font: 11px var(--font-mono); white-space: nowrap; }
+.masthead-rule { height: 1px; background: var(--line); margin: 4px 0 2px; }
+.research-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding-top: 20px; border-top: 1px solid var(--line); margin-top: 24px; color: var(--muted); font-size: 11px; }
+.welcome { padding: 28px 0 18px; }
+.eyebrow { color: var(--orange-ink); font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; margin-bottom: 16px; }
+.welcome h2 { font-size: clamp(30px, 3.1vw, 42px); font-weight: 600; line-height: 1.15; letter-spacing: -1.5px; margin: 0 0 18px; padding: 0; max-width: 620px; }
+.welcome p { max-width: 440px; font-size: 15px; line-height: 1.7; margin: 0; }
+.ready-panel { padding: 22px 24px; background: #fff; border: 1px solid var(--line); border-radius: 12px; margin-top: 26px; }
+.ready-panel h3 { font-size: 15px; font-weight: 600; margin: 0 0 5px; padding: 0; }
+.ready-panel .panel-caption { font-size: 12px; margin: 0 0 14px; }
+.source-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 0; border-top: 1px solid #edf0f3; }
+.source-name { display: block; font-size: 13px; font-weight: 600; }
+.source-detail { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+.source-state { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.method-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; padding: 22px 0; border-top: 1px solid var(--line); margin: 28px 0 0; }
+.method-step { display: flex; gap: 12px; }
+.method-index { font: 12px var(--font-mono); color: var(--orange-ink); padding-top: 3px; }
+.method-step h3 { font-size: 13px; font-weight: 600; margin: 0 0 7px; padding: 0; }
+.method-step p { font-size: 12px; margin: 0; max-width: 280px; }
 
-/* Start state: honest data readiness, no invented quotes or prices. */
-.welcome {{ padding:38px 0 22px; }}
-.eyebrow {{ color:{ACCENT}; font:600 11px var(--font-mono);
-    letter-spacing:1.3px; text-transform:uppercase; margin-bottom:17px; }}
-.welcome h2 {{ font-size:clamp(30px,3.4vw,45px); font-weight:600; line-height:1.16;
-    letter-spacing:-1.8px; margin:0 0 20px; padding:0; max-width:650px; }}
-.welcome p {{ max-width:510px; font-size:15px; line-height:1.7; margin:0; }}
-.ready-panel {{ padding:26px 28px; background:{SURFACE}; border:1px solid {BORDER};
-    border-radius:12px; margin-top:34px; }}
-.ready-panel h3 {{ font-size:15px; font-weight:600; margin:0 0 6px; padding:0; }}
-.ready-panel .panel-caption {{ font-size:12px; margin:0 0 16px; color:{TEXT_MUTE}; }}
-.source-row {{ display:flex; justify-content:space-between; align-items:center;
-    gap:16px; padding:14px 0; border-top:1px solid {GRID}; }}
-.source-name {{ display:block; font-size:13px; font-weight:600; }}
-.source-detail {{ display:block; font-size:12px; color:{TEXT_MUTE}; margin-top:3px; }}
-.source-state {{ font:11px var(--font-mono); color:{TEXT_MUTE}; white-space:nowrap; }}
-.method-strip {{ display:grid; grid-template-columns:repeat(3,1fr); gap:28px;
-    padding:26px 0; border-top:1px solid {BORDER}; border-bottom:1px solid {BORDER};
-    margin:28px 0 12px; }}
-.method-step {{ display:flex; gap:14px; }}
-.method-index {{ font:12px var(--font-mono); color:{ACCENT}; padding-top:3px; }}
-.method-step h3 {{ font-size:14px; font-weight:600; margin:0 0 7px; padding:0; }}
-.method-step p {{ font-size:12.5px; margin:0; max-width:280px; }}
+.stTabs [role="tablist"] { gap: 26px; background: transparent; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.stTabs [role="tab"] { height: 43px; padding: 0 1px; border-radius: 0; color: var(--muted); background: transparent; font-weight: 550; }
+.stTabs [role="tab"] p { font-size: 13px; white-space: nowrap; }
+.stTabs [role="tab"][aria-selected="true"], .stTabs [role="tab"][aria-selected="true"] p { color: var(--orange-ink); }
+.stTabs .react-aria-SelectionIndicator, .stTabs [data-baseweb="tab-highlight"] { background: var(--orange) !important; height: 2px !important; }
+.stTabs [data-baseweb="tab-border"] { background: transparent; }
+.stTabs .stTabs [role="tablist"] { gap: 20px; margin-bottom: 10px; }
+.stTabs .stTabs [role="tab"] { height: 36px; }
+.page-header { margin: 0 0 5px; }
+.page-header h2 { font-size: 27px; font-weight: 600; letter-spacing: -.8px; line-height: 1.25; padding: 0; margin: 0 0 8px; }
+.page-header p { font-size: 13px; margin: 0; max-width: 65ch; }
+.data-status { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 0 0 2px; color: var(--muted); font-size: 11px; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.status-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: #637080; }
+.status-live .dot { background: #287451; }
+.status-stale .dot { background: #875b16; }
+.status-stale { color: #805411; }
+.status-date { margin-left: auto; font-size: 11px; }
 
-/* Native navigation: one continuous baseline and a clear active state. */
-.stTabs [role="tablist"] {{ gap:26px; background:transparent;
-    border-bottom:1px solid {BORDER}; margin-bottom:18px; }}
-.stTabs [role="tab"] {{ height:48px; padding:0 2px; border-radius:0;
-    color:{TEXT_DIM}; background:transparent; font-weight:550; }}
-.stTabs [role="tab"] p {{ font-size:13px; white-space:nowrap; }}
-.stTabs [role="tab"][aria-selected="true"] {{ color:{ACCENT}; }}
-.stTabs [role="tab"][aria-selected="true"] p {{ color:{ACCENT}; }}
-.stTabs .react-aria-SelectionIndicator, .stTabs [data-baseweb="tab-highlight"] {{ background:{ACCENT}; height:2px; }}
-.stTabs [data-baseweb="tab-border"] {{ background:transparent; }}
-.stTabs .stTabs [role="tablist"] {{ gap:20px; margin-bottom:10px; }}
-.stTabs .stTabs [role="tab"] {{ height:38px; }}
-.page-header {{ margin:0 0 4px; }}
-.page-header h2 {{ font-size:29px; font-weight:600; letter-spacing:-1px;
-    line-height:1.25; padding:0; margin:0 0 8px; }}
-.page-header p {{ font-size:13px; margin:0; color:{TEXT_DIM}; }}
-.data-status {{ display:flex; align-items:center; gap:18px; flex-wrap:wrap;
-    padding:0 0 8px; color:{TEXT_MUTE}; font-size:12px; }}
-.status-pill {{ display:inline-flex; align-items:center; gap:7px; font-size:12px; }}
-.status-pill .dot {{ width:6px; height:6px; border-radius:50%; background:{TEXT_MUTE}; }}
-.status-live .dot {{ background:{GREEN}; }}
-.status-stale .dot {{ background:{AMBER}; }}
-.status-stale {{ color:{AMBER}; }}
-.status-date {{ margin-left:auto; font:11px var(--font-mono); }}
+/* One forecast surface; the primary estimate is intentionally dominant. */
+.forecast-overview { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin: 4px 0 2px; }
+.forecast-main { display: grid; grid-template-columns: 1fr 1fr; padding: 28px 30px; gap: 30px; }
+.estimate { border-right: 1px solid #edf0f3; padding-right: 28px; }
+.metric-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 9px; }
+.estimate-number { color: var(--ink); font-size: clamp(38px, 4vw, 50px); font-weight: 600; line-height: 1.1; letter-spacing: -2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.estimate-change { margin-top: 11px; color: var(--muted); font-size: 12px; }
+.estimate-change > span { font-weight: 600; margin-right: 5px; }
+.range-number { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; font-size: clamp(23px, 2.5vw, 30px); font-weight: 550; line-height: 1.3; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+.range-number > span { white-space: nowrap; }
+.range-separator { color: var(--muted); font-size: 12px; font-weight: 400; letter-spacing: 0; }
+.range-scale { display: flex; align-items: center; height: 18px; margin-top: 12px; gap: 7px; max-width: 310px; }
+.range-end { height: 9px; width: 1px; background: #d7a369; }
+.range-track { position: relative; height: 2px; flex: 1; background: #f0d2af; }
+.range-track::after { content: ''; position: absolute; width: 7px; height: 7px; top: -2.5px; left: var(--median-position, 50%); transform: translateX(-50%); border-radius: 50%; background: #c3741d; }
+.metric-foot { display: block; color: var(--muted); font-size: 12px; margin-top: 7px; line-height: 1.6; }
+.forecast-context { display: flex; align-items: center; gap: 30px; padding: 16px 30px; background: #fafbfc; border-top: 1px solid #edf0f3; font-size: 12px; }
+.forecast-context > div { display: flex; align-items: baseline; gap: 9px; }
+.forecast-context span { color: var(--muted); }
+.forecast-context strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.forecast-context .regime-context { margin-left: auto; }
+.delta-positive, .regime-bull { color: #287451; }
+.delta-negative, .regime-bear { color: #ae3c3c; }
+.regime-side { color: var(--muted); }
+.section-label { color: var(--ink); font-size: 15px; font-weight: 600; margin: 18px 0 3px; letter-spacing: -.2px; }
+[data-testid="stPlotlyChart"] { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+.detail-panel { padding: 4px 0 10px; }
+.detail-panel dl { margin: 0; }
+.detail-row { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 12px 0; border-bottom: 1px solid #e8ecf0; font-size: 13px; }
+.detail-row dt { color: var(--muted); }
+.detail-row dd { margin: 0; text-align: right; color: var(--ink); font-weight: 550; font-variant-numeric: tabular-nums; }
+.detail-note { color: var(--muted); font-size: 12px; line-height: 1.65; margin: 13px 0 0; max-width: 65ch; }
+.market-item { padding: 12px 0; border-bottom: 1px solid #e8ecf0; }
+.market-item:last-child { border: 0; }
+.market-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
+.market-heading strong { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.market-item p { font-size: 12px; margin: 5px 0 0; }
 
-/* The forecast has priority; supporting metrics share a single surface. */
-.forecast-strip {{ display:grid; grid-template-columns:1.05fr 1.15fr 1.25fr .8fr;
-    background:{SURFACE}; border:1px solid {BORDER}; border-radius:12px;
-    overflow:hidden; margin:4px 0 8px; }}
-.forecast-cell {{ padding:20px 24px; position:relative; }}
-.forecast-cell + .forecast-cell {{ border-left:1px solid {BORDER}; }}
-.forecast-primary {{ background:#fff8ef; }}
-.metric-label {{ display:block; color:{TEXT_DIM}; font-size:12px; margin-bottom:13px; }}
-.metric-number {{ font-size:clamp(24px,2.5vw,34px); line-height:1.2; font-weight:600;
-    letter-spacing:-1.4px; font-variant-numeric:tabular-nums; white-space:nowrap; }}
-.forecast-primary .metric-number {{ color:{ACCENT}; }}
-.metric-foot {{ display:block; color:{TEXT_MUTE}; font-size:12px; margin-top:10px; }}
-.metric-range {{ display:flex; flex-wrap:nowrap; align-items:baseline; gap:4px;
-    font-family:var(--font-sans); font-size:clamp(19px,2.1vw,30px);
-    line-height:1.2; font-weight:600; letter-spacing:-1.2px;
-    font-variant-numeric:tabular-nums; white-space:nowrap; }}
-.metric-range > span {{ white-space:nowrap; }}
-.range-separator {{ color:{TEXT_MUTE}; font-size:11px; font-weight:400;
-    letter-spacing:0; padding:0 2px; }}
-.metric-regime {{ font-size:27px; letter-spacing:-.8px; font-weight:550; }}
-.delta-positive {{ color:{GREEN}; }}
-.delta-negative {{ color:{RED}; }}
-.regime-bull {{ color:{GREEN}; }}
-.regime-bear {{ color:{RED}; }}
-.regime-side {{ color:{TEXT_DIM}; }}
-[data-testid="stMetric"] {{ padding:18px 20px; border:1px solid {BORDER};
-    border-radius:10px; background:{SURFACE}; }}
-[data-testid="stMetricLabel"] {{ color:{TEXT_DIM}; }}
-[data-testid="stMetricValue"] {{ color:{TEXT}; font-size:27px;
-    font-variant-numeric:tabular-nums; letter-spacing:-1px; }}
-[data-testid="stMetricValue"] > div {{ white-space:normal; overflow-wrap:anywhere; }}
-.section-label {{ color:{TEXT}; font-size:15px; font-weight:600;
-    margin:20px 0 3px; letter-spacing:-.25px; }}
-[data-testid="stPlotlyChart"] {{ border:1px solid {BORDER}; border-radius:12px;
-    overflow:hidden; background:{SURFACE}; }}
-.detail-panel {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:12px;
-    padding:8px 22px 18px; }}
-.detail-row {{ display:flex; justify-content:space-between; align-items:baseline;
-    gap:20px; padding:12px 0; border-bottom:1px solid {GRID}; font-size:13px; }}
-.detail-row dt {{ color:{TEXT_DIM}; }}
-.detail-row dd {{ margin:0; text-align:right; color:{TEXT}; font-weight:550;
-    font-variant-numeric:tabular-nums; }}
-.detail-panel dl {{ margin:0; }}
-.detail-note {{ color:{TEXT_MUTE}; font-size:12px; line-height:1.6; margin:14px 0 0; }}
-.market-item {{ padding:16px 0; border-bottom:1px solid {GRID}; }}
-.market-item:last-child {{ border:0; padding-bottom:0; }}
-.market-heading {{ display:flex; justify-content:space-between; align-items:center;
-    gap:16px; font-size:13px; color:{TEXT_DIM}; }}
-.market-heading strong {{ color:{TEXT}; font-weight:600; font-variant-numeric:tabular-nums; }}
-.market-item p {{ font-size:12px; margin:6px 0 0; }}
+.info-box { padding: 14px 18px; background: #eef1f4; border-radius: 8px; color: var(--muted); font-size: 12px; line-height: 1.7; margin: 3px 0 6px; }
+.info-box b { color: var(--ink); }
+.info-box summary { cursor: pointer; font-weight: 500; color: var(--ink); }
+.info-box .notice-body { margin-top: 10px; max-width: 90ch; }
+.warn-box { padding: 12px 16px; border-left: 2px solid #c48732; background: #fbf5e9; border-radius: 0 7px 7px 0; color: #785319; font-size: 12px; line-height: 1.7; margin: 0 0 3px; }
+.warn-box summary { cursor: pointer; font-weight: 500; }
+.warn-box .notice-body { margin-top: 8px; max-width: 85ch; color: #6b5b42; }
+.model-caution { color: #785319; font-size: 12px; line-height: 1.65; padding: 2px 0 0; }
+.disclaimer-box { color: var(--muted); font-size: 11px; line-height: 1.7; padding: 14px 0 0; margin-top: 8px; border-top: 1px solid var(--line); max-width: 100ch; }
+.notice-icon { display: inline-grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; font-weight: 650; margin-right: 6px; }
+[data-testid="stExpander"] { background: transparent; border-color: var(--line); border-radius: 8px; }
+[data-testid="stExpander"] summary { color: var(--ink); font-size: 12px; }
+[data-testid="stExpander"] summary:hover { background: #eef1f4; }
+[data-testid="stMetric"] { padding: 18px 20px; border-left: 2px solid #e4e8ed; background: #fff; }
+[data-testid="stMetricValue"] { color: var(--ink); font-size: 27px; font-variant-numeric: tabular-nums; letter-spacing: -.7px; }
+[data-testid="stMetricValue"] > div { white-space: normal; overflow-wrap: anywhere; }
+.stButton button { border-radius: 7px; min-height: 42px; padding: 8px 17px; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
+.stButton button p { white-space: nowrap; font-size: 12px; }
+.stButton button[kind="primary"] { background: var(--orange); border-color: var(--orange); color: #202730; }
+.stButton button[kind="primary"] p { color: #202730; font-weight: 600; }
+.stButton button[kind="primary"]:hover { background: #e38f26; border-color: #e38f26; }
+.stButton button[kind="secondary"] { background: #fff; border-color: var(--line); color: var(--ink); }
+.stButton button[kind="secondary"]:hover { background: #eef1f4; border-color: #b2bac4; }
+.stButton button:active { transform: translateY(1px); }
+button:focus-visible, [tabindex]:focus-visible, summary:focus-visible { outline: 2px solid #9e570e !important; outline-offset: 3px; }
+[data-testid="stSelectbox"] label { color: var(--muted); font-size: 12px; }
+[data-baseweb="select"] > div { background: #fff; border-color: var(--line); border-radius: 7px; }
+[data-baseweb="select"] { color: var(--ink); font-size: 12px; }
+[data-testid="stSpinner"] { color: var(--muted); padding: 24px 0; }
+.table-wrap { max-width: 100%; overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 10px; margin: 6px 0 10px; }
+table.analytics-table { width: 100%; min-width: 1020px; border-collapse: collapse; font-size: 12px; }
+table.analytics-table th { text-align: left; font-weight: 500; color: var(--muted); background: #f0f3f5; padding: 12px 14px; white-space: nowrap; }
+table.analytics-table td { padding: 14px; color: var(--ink); border-top: 1px solid #edf0f3; white-space: nowrap; }
+table.analytics-table td:nth-child(n+5), table.analytics-table th:nth-child(n+5) { text-align: right; font-variant-numeric: tabular-nums; }
+table.analytics-table tbody tr:has(td.model-usulan) { background: #fff7ec; }
+table.analytics-table td.model-usulan { color: var(--orange-ink); font-weight: 650; }
+table.compact-table { min-width: 850px; }
+table.compact-table td:nth-child(n+2), table.compact-table th:nth-child(n+2) { text-align: right; font-variant-numeric: tabular-nums; }
+table.compact-table th:first-child, table.compact-table td:first-child { min-width: 150px; }
+table.compact-table tr:has(td.model-usulan) td:first-child { background: #fff7ec; }
+table.analytics-table tbody tr:hover { background: #f2f4f6; }
+table.analytics-table th:first-child, table.analytics-table td:first-child { position: sticky; left: 0; background: #fff; }
+table.analytics-table th:first-child { background: #f0f3f5; }
+[data-testid="stMarkdownContainer"]:has(table) { overflow-x: auto; }
+[data-testid="stMarkdownContainer"] table:not(.analytics-table) { min-width: 500px; font-size: 12px; }
+[data-testid="stMarkdownContainer"] table th, [data-testid="stMarkdownContainer"] table td { border-color: var(--line); }
 
-/* Disclosures remain visible but do not bury the forecast. */
-.info-box {{ padding:17px 20px; background:{SURFACE_2}; border-radius:8px;
-    color:{TEXT_DIM}; font-size:13px; line-height:1.75; margin:4px 0 10px; }}
-.info-box b {{ color:{TEXT}; }}
-.info-box summary {{ cursor:pointer; font-weight:550; color:{TEXT}; }}
-.info-box .notice-body {{ margin-top:12px; }}
-.warn-box {{ padding:14px 18px; border-left:3px solid {AMBER}; background:#faf6ed;
-    border-radius:0 8px 8px 0; color:#755119; font-size:12.5px; line-height:1.7; margin:0 0 8px; }}
-.warn-box summary {{ cursor:pointer; color:#755119; font-weight:500; }}
-.warn-box summary:focus-visible {{ outline:2px solid {ACCENT}; outline-offset:5px; }}
-.warn-box .notice-body {{ margin-top:12px; color:{TEXT_DIM}; }}
-.disclaimer-box {{ color:{TEXT_MUTE}; font-size:12px; line-height:1.7;
-    padding:16px 0; margin-top:18px; border-top:1px solid {BORDER}; }}
-.disclaimer-box b {{ color:{TEXT_DIM}; }}
-.notice-icon {{ display:inline-grid; place-items:center; width:14px; height:14px;
-    border:1px solid currentColor; border-radius:50%; font-size:10px; font-weight:700;
-    margin-right:6px; vertical-align:1px; }}
-[data-testid="stExpander"] {{ background:transparent; border-color:{BORDER}; border-radius:8px; }}
-[data-testid="stExpander"] summary {{ color:{TEXT}; font-size:13px; }}
-[data-testid="stExpander"] summary:hover {{ background:{SURFACE_2}; }}
+@media (max-width: 1000px) {
+  .block-container { padding: 3.5rem 1.5rem 2rem; }
+  .forecast-main { padding: 24px; gap: 22px; }
+  .forecast-context { padding: 15px 24px; gap: 20px; }
+  .estimate-number { font-size: 42px; }
+  .range-number { font-size: 25px; }
+  .forecast-context > div { flex-wrap: wrap; gap: 3px 7px; }
+  .topbar-meta { display: none; }
+}
+@media (max-width: 640px) {
+  .block-container { padding: 3rem 1rem 1.5rem; }
+  [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { flex: 1 1 100% !important; width: 100% !important; min-width: 0 !important; }
+  [data-testid="stHorizontalBlock"]:has(.topbar) { flex-wrap: nowrap !important; align-items: center; }
+  [data-testid="stHorizontalBlock"]:has(.topbar) > [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; width: auto !important; }
+  [data-testid="stHorizontalBlock"]:has(.topbar) > [data-testid="stColumn"]:last-child { flex: 0 0 108px !important; width: 108px !important; }
+  .topbar-title p { display: none; }
+  .topbar-title h1 { font-size: 16px; }
+  .welcome { padding: 16px 0 4px; }
+  .welcome h2 { font-size: 31px; letter-spacing: -1px; }
+  .ready-panel { margin-top: 8px; padding: 20px; }
+  .method-strip { grid-template-columns: 1fr; gap: 20px; margin-top: 12px; }
+  .method-step p { max-width: none; }
+  .forecast-main { grid-template-columns: 1fr; gap: 22px; padding: 22px; }
+  .estimate { border-right: 0; border-bottom: 1px solid #edf0f3; padding: 0 0 20px; }
+  .estimate-number { font-size: 43px; }
+  .range-number { font-size: 26px; }
+  .forecast-context { flex-wrap: wrap; padding: 15px 22px; gap: 14px 24px; }
+  .forecast-context > div { flex-direction: column; gap: 4px; }
+  .forecast-context .regime-context { margin-left: 0; }
+  .page-header h2 { font-size: 24px; }
+  .stTabs [role="tablist"] { gap: 20px; }
+  .stTabs [role="tab"] p { font-size: 12px; }
+  .data-status { gap: 8px 12px; }
+  .status-date { margin-left: 0; width: 100%; }
+  .detail-row { gap: 15px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
 
-/* Controls: readable tooltips, keyboard focus, pressed feedback. */
-.stButton button {{ border-radius:7px; min-height:42px; padding:8px 18px;
-    transition:background .16s ease, border-color .16s ease, transform .16s ease; }}
-.stButton button[kind="primary"] {{ background:{ACCENT}; border-color:{ACCENT}; color:{TEXT}; }}
-.stButton button[kind="primary"] p {{ color:{TEXT}; font-weight:600; font-size:13px; }}
-.stButton button[kind="primary"]:hover {{ background:#e89028; border-color:#e89028; }}
-.stButton button[kind="secondary"] {{ background:{SURFACE}; border-color:{BORDER}; color:{TEXT}; }}
-.stButton button[kind="secondary"]:hover {{ background:{SURFACE_2}; border-color:#b2bac4; }}
-.stButton button:active {{ transform:translateY(1px); }}
-button:focus-visible, [tabindex]:focus-visible {{ outline:2px solid {ACCENT} !important; outline-offset:3px; }}
-[data-testid="stTooltipContent"] {{ background:{TEXT}; color:white; border-radius:6px; }}
-[data-testid="stSelectbox"] label {{ color:{TEXT_DIM}; font-size:12px; }}
-[data-baseweb="select"] > div {{ background:{SURFACE}; border-color:{BORDER}; border-radius:7px; }}
-[data-baseweb="select"] {{ color:{TEXT}; }}
-[data-testid="stSpinner"] {{ color:{TEXT_DIM}; padding:24px 0; }}
-
-/* Tables scroll within their own region, never across the page. */
-.table-wrap {{ max-width:100%; overflow-x:auto; background:{SURFACE};
-    border:1px solid {BORDER}; border-radius:10px; margin:6px 0 10px; }}
-table.analytics-table {{ width:100%; min-width:1050px; border-collapse:collapse; font-size:12px; }}
-table.analytics-table th {{ text-align:left; font-weight:500; color:{TEXT_DIM};
-    background:#f1f3f5; padding:13px 16px; white-space:nowrap; }}
-table.analytics-table td {{ padding:15px 16px; color:{TEXT}; border-top:1px solid {GRID}; white-space:nowrap; }}
-table.analytics-table td:nth-child(n+5), table.analytics-table th:nth-child(n+5) {{
-    text-align:right; font-variant-numeric:tabular-nums; }}
-table.analytics-table tbody tr:has(td.model-usulan) {{ background:#fff8ef; }}
-table.analytics-table td.model-usulan {{ color:{ACCENT}; font-weight:650; }}
-table.analytics-table tbody tr:hover {{ background:{SURFACE_2}; }}
-table.analytics-table th:first-child, table.analytics-table td:first-child {{
-    position:sticky; left:0; background:{SURFACE}; }}
-table.analytics-table th:first-child {{ background:#f1f3f5; }}
-table.analytics-table td.model-usulan {{ background:#fff8ef; }}
-[data-testid="stMarkdownContainer"]:has(table) {{ overflow-x:auto; }}
-[data-testid="stMarkdownContainer"] table:not(.analytics-table) {{ min-width:560px; font-size:13px; }}
-[data-testid="stMarkdownContainer"] table th,
-[data-testid="stMarkdownContainer"] table td {{ border-color:{BORDER}; }}
-
-@media (max-width:1000px) {{
-    .block-container {{ padding:4rem 1.5rem 2rem; }}
-    .forecast-strip {{ grid-template-columns:1fr 1fr; }}
-    .forecast-cell:nth-child(3) {{ border-left:0; }}
-    .forecast-cell:nth-child(n+3) {{ border-top:1px solid {BORDER}; }}
-    .metric-number {{ font-size:32px; }}
-    .metric-range {{ font-size:clamp(19px,2.7vw,27px); }}
-    .topbar-meta {{ display:none; }}
-}}
-@media (max-width:640px) {{
-    .block-container {{ padding:4rem 1rem 2rem; }}
-    [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap !important; }}
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
-        flex:1 1 100% !important; width:100% !important; min-width:0 !important; }}
-    .topbar {{ min-height:54px; margin:0; }}
-    .topbar-title h1 {{ font-size:17px; }}
-    .topbar-title p {{ font-size:12px; }}
-    .welcome {{ padding:20px 0 4px; }}
-    .welcome h2 {{ font-size:33px; letter-spacing:-1.1px; }}
-    .ready-panel {{ margin-top:8px; padding:22px; }}
-    .method-strip {{ grid-template-columns:1fr; gap:22px; margin-top:12px; }}
-    .method-step p {{ max-width:none; }}
-    .forecast-strip {{ grid-template-columns:1fr; }}
-    .forecast-cell {{ padding:18px 14px; }}
-    .forecast-cell + .forecast-cell {{ border-left:0; border-top:1px solid {BORDER}; }}
-    .metric-number {{ font-size:27px; letter-spacing:-1px; }}
-    .metric-range {{ font-size:clamp(19px,6vw,27px); letter-spacing:-1px; }}
-    .range-separator {{ padding:0; }}
-    .metric-label {{ font-size:12px; }}
-    .metric-foot {{ font-size:10px; }}
-    .metric-regime {{ font-size:25px; }}
-    .page-header h2 {{ font-size:25px; }}
-    .page-header p {{ font-size:12px; }}
-    .stTabs [role="tablist"] {{ gap:18px; }}
-    .stTabs [role="tab"] p {{ font-size:12px; }}
-    .data-status {{ gap:10px 16px; }}
-    .status-date {{ margin-left:0; width:100%; }}
-    .detail-panel {{ padding:6px 16px 16px; }}
-}}
-@media (prefers-reduced-motion:reduce) {{
-    *, *::before, *::after {{ transition:none !important; animation:none !important; }}
-}}
 </style>
 """, unsafe_allow_html=True)
 
 
 def render_table(df: pd.DataFrame, label='Hasil evaluasi model'):
-    html = df.to_html(index=False, escape=True, classes="analytics-table", border=0)
+    table_class = "analytics-table compact-table" if df.columns[0] == "Model" else "analytics-table"
+    html = df.to_html(index=False, escape=True, classes=table_class, border=0)
     html = html.replace("<td>Model Usulan</td>", "<td class='model-usulan'>Model Usulan</td>")
     st.markdown(
         f"<div class='table-wrap' role='region' aria-label='{escape(label, quote=True)}' tabindex='0'>{html}</div>",
@@ -884,7 +1000,7 @@ with topbar_col:
             <div class='topbar-coin' aria-hidden='true'>₿</div>
             <div class='topbar-title'>
                 <h1>BTC Dashboard</h1>
-                <p>Prediksi Probabilistik</p>
+                <p>Estimasi harga &amp; kondisi pasar</p>
             </div>
         </div>
         <span class='topbar-meta'>BTC / USD</span>
@@ -907,21 +1023,21 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
         st.markdown("""
         <section class='welcome'>
             <div class='eyebrow'>Prediksi 1 hari ke depan</div>
-            <h2>Prediksi Bitcoin, dengan<br>ukuran ketidakpastian.</h2>
-            <p>Amati estimasi harga, interval prediksi 90%, dan kondisi pasar
-            melalui model HMM, XGBoost Quantile, dan Conformal Prediction.</p>
+            <h2>Harga Bitcoin berikutnya,<br>dengan rentang prediksinya.</h2>
+            <p>Lihat estimasi harga satu hari ke depan, rentang prediksi,
+            dan kondisi pasar dari data yang tersedia.</p>
         </section>
         """, unsafe_allow_html=True)
         st.button("Muat & Jalankan Model", type="primary", on_click=start_dashboard,
                   help="Mengambil data harga, sentimen, dan on-chain, lalu melatih model prediksi.")
         st.button("Lihat Hasil Eksperimen", on_click=open_comparison,
                   help="Buka hasil Colab terverifikasi tanpa mengambil data atau melatih model.")
-        st.caption("Prediksi terbaru memproses data setelah tombol dijalankan. Hasil eksperimen dapat langsung dibaca.")
+        st.caption("Data diperiksa saat prediksi dijalankan. Komparasi model dapat dibuka langsung.")
     with readiness:
         st.markdown("""
         <aside class='ready-panel' aria-label='Kesiapan sumber data'>
-            <h3>Sumber data</h3>
-            <p class='panel-caption'>Status ketersediaan diperiksa saat model dijalankan.</p>
+            <h3>Data yang digunakan</h3>
+            <p class='panel-caption'>Diperiksa saat Anda menjalankan prediksi.</p>
             <div class='source-row'><div><span class='source-name'>Harga Bitcoin</span>
             <span class='source-detail'>Yahoo Finance · BTC-USD</span></div>
             <span class='source-state'>Belum dimuat</span></div>
@@ -936,14 +1052,14 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
     st.markdown(f"""
     <section class='method-strip' aria-label='Alur model prediksi'>
         <article class='method-step'><span class='method-index'>01</span><div>
-        <h3>Kenali kondisi pasar</h3><p>HMM mengidentifikasi regime Bear, Sideways,
-        atau Bull dari data historis.</p></div></article>
+        <h3>Kenali kondisi pasar</h3><p>Lihat klasifikasi kondisi pasar dari
+        data harga historis.</p></div></article>
         <article class='method-step'><span class='method-index'>02</span><div>
-        <h3>Estimasi rentang harga</h3><p>XGBoost Quantile menghasilkan batas bawah,
-        median, dan batas atas prediksi.</p></div></article>
+        <h3>Estimasi rentang harga</h3><p>Baca estimasi tengah bersama batas
+        bawah dan atas prediksi.</p></div></article>
         <article class='method-step'><span class='method-index'>03</span><div>
-        <h3>Kalibrasi interval</h3><p>Conformal Prediction menyesuaikan interval
-        dengan target cakupan 90%.</p></div></article>
+        <h3>Pahami ketidakpastian</h3><p>Rentang prediksi memakai target
+        cakupan 90%; hasil aktual dapat berbeda.</p></div></article>
     </section>
     <div class='disclaimer-box'>
     {WARN_ICON}<b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
@@ -961,7 +1077,7 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
 # ============================================================
 DATA_OK = False
 if st.session_state.dashboard_started:
-    with st.spinner("Memuat data dan menjalankan model kausal..."):
+    with st.spinner("Mengambil data dan menyiapkan prediksi..."):
         try:
             result = build_features_and_predict()
             df_full = result["df"]
@@ -977,13 +1093,13 @@ if DATA_OK:
     is_price_fresh = price_staleness_days <= 1
     onchain_stale_days = result["onchain_staleness_days"]
     is_onchain_fresh = onchain_stale_days <= 1
-    price_status = "Harga up-to-date" if is_price_fresh else f"Harga tertinggal {price_staleness_days} hari"
-    chain_status = "On-chain terbaru" if is_onchain_fresh else f"On-chain tertinggal {onchain_stale_days} hari"
+    price_status = "Harga terbaru" if is_price_fresh else f"Harga tertinggal {price_staleness_days} hari"
+    chain_status = "On-chain terbaru" if is_onchain_fresh else f"Netflow historis · {onchain_stale_days} hari"
     st.markdown(f"""
     <div class='data-status' aria-label='Kesegaran data'>
         <span class='status-pill {"status-live" if is_price_fresh else "status-stale"}'>{price_status}</span>
         <span class='status-pill {"status-live" if is_onchain_fresh else "status-stale"}'>{chain_status}</span>
-        <span class='status-date'>Data acuan · {price_last_date.strftime('%d %b %Y')}</span>
+        <span class='status-date'>Data acuan · {format_date_id(price_last_date)}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -996,238 +1112,7 @@ with tab_pred:
     if not DATA_OK:
         st.info("Jalankan prediksi untuk memuat data terbaru. Hasil Colab tetap tersedia pada tab Komparasi Model.")
     else:
-        st.markdown("""
-        <div class='page-header'>
-            <h2>Prediksi harga Bitcoin</h2>
-            <p>Horizon 1 hari · HMM raw filtering kausal + XGBoost Quantile + Conformal Prediction</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        last_close  = result["last_close"]
-        last_date   = result["last_date"]
-        pred_med    = result["pred_med"]
-        pred_lo     = result["pred_lo"]
-        pred_hi     = result["pred_hi"]
-        pred_date   = result["pred_date"]
-        last_regime = result["last_regime"]
-        last_sent   = result["last_sent"]
-        last_netflow= result["last_netflow"]
-
-        st.caption("Pipeline live memakai raw filtering dan purge satu tanggal pada batas split. "
-                   "Data/bobot live berbeda dari artefak Colab; waktu publikasi intraday sumber belum diaudit.")
-        with st.expander("Metode dan versi pipeline live"):
-            st.json(result["pipeline_metadata"])
-            st.caption("Parameter dan nama state HMM berasal dari train saja. Filtering sesudah cutoff tidak "
-                       "memakai observasi masa depan. Transformasi fitur train tetap in-sample. "
-                       "Konvensi kuantil CQR dipertahankan dari Colab; target 90% bukan jaminan cakupan deret waktu.")
-            delta = result["pipeline_metadata"]["hmm_last_delta"]
-            if delta is not None and delta < 0:
-                st.warning("Likelihood HMM turun pada iterasi terakhir. Baca prediksi bersama keterbatasan numerik ini.")
-
-        delta_pct = (pred_med - last_close) / last_close * 100
-        regime_label = REGIME_NAMES[last_regime]
-        regime_class = {0: "regime-bear", 1: "regime-side", 2: "regime-bull"}[last_regime]
-        delta_class = "delta-positive" if delta_pct >= 0 else "delta-negative"
-        st.markdown(f"""
-        <section class='forecast-strip' aria-label='Ringkasan prediksi Bitcoin'>
-            <div class='forecast-cell'>
-                <span class='metric-label'>Harga terakhir</span>
-                <div class='metric-number'>${last_close:,.0f}</div>
-                <span class='metric-foot'>Penutupan · {last_date.strftime('%d %b %Y')}</span>
-            </div>
-            <div class='forecast-cell forecast-primary'>
-                <span class='metric-label'>Prediksi median</span>
-                <div class='metric-number'>${pred_med:,.0f}</div>
-                <span class='metric-foot'><span class='{delta_class}'>{delta_pct:+.2f}%</span>
-                · {pred_date.strftime('%d %b %Y')}</span>
-            </div>
-            <div class='forecast-cell'>
-                <span class='metric-label'>Interval prediksi 90%</span>
-                <div class='metric-range'><span>${pred_lo:,.0f}</span><span class='range-separator'>s.d.</span><span>${pred_hi:,.0f}</span></div>
-                <span class='metric-foot'>Kuantil 5% sampai 95% · Terkalibrasi</span>
-            </div>
-            <div class='forecast-cell'>
-                <span class='metric-label'>Regime pasar</span>
-                <div class='metric-regime {regime_class}'>{regime_label}</div>
-                <span class='metric-foot'>Filtering maju HMM</span>
-            </div>
-        </section>
-        """, unsafe_allow_html=True)
-
-        if not is_price_fresh:
-            st.markdown(f"""
-            <details class='warn-box'><summary>Harga acuan tertinggal {price_staleness_days} hari. Prediksi mengikuti candle terakhir.</summary>
-            <div class='notice-body'>{WARN_ICON}<b>Harga acuan belum ter-update ke hari ini.</b> Candle harian
-            BTC-USD terakhir dari Yahoo Finance yang tersedia adalah
-            <b>{price_last_date.strftime('%d %B %Y')}</b> ({price_staleness_days} hari
-            lalu), sehingga prediksi di bawah ini masih berpatokan pada tanggal
-            tersebut, bukan hari ini. Ini biasanya terjadi karena Yahoo Finance
-            menutup candle harian instrumen crypto berdasarkan basis hari
-            <b>US Eastern</b> (jauh di belakang WIB), atau candle terbaru
-            memang belum di-publish sumbernya. Coba klik tombol
-            <b>Refresh Data</b> di kanan atas beberapa saat lagi untuk
-            mengecek ulang tanpa menunggu cache (1 jam) habis sendiri.
-            </div></details>
-            """, unsafe_allow_html=True)
-
-        if not is_onchain_fresh:
-            st.markdown(f"""
-            <details class='warn-box'><summary>Netflow memakai forward-fill setelah {format_date_id(result['onchain_last_real_date'])}. Baca batasan data.</summary>
-            <div class='notice-body'>{WARN_ICON}<b>Data on-chain tidak terkini.</b> Baris terakhir
-            arsip CSV yang diambil bertanggal
-            <b>{format_date_id(result['onchain_last_csv_date'])}</b>, tetapi nilai
-            netflow tidak kosong terakhir bertanggal
-            <b>{format_date_id(result['onchain_last_real_date'])}</b>
-            ({onchain_stale_days} hari dari harga acuan). Prediksi memakai nilai netflow
-            historis tersebut melalui forward-fill; nilainya tidak menggambarkan
-            aktivitas bursa setelah tanggal itu. Harga dan sentimen diambil kembali
-            saat pipeline dijalankan, jika sumbernya tersedia, dengan cache satu jam.
-            <br><br>
-            <span style='font-size:12px;color:{TEXT_DIM}'>
-            <b style='color:{AMBER}'>Batasan penelitian:</b> hasil pengujian
-            historis tidak mengukur akurasi prediksi saat netflow diteruskan
-            dari data lama. Prediksi ini perlu dibaca dengan batasan tersebut.
-            </span>
-            </div></details>
-            """, unsafe_allow_html=True)
-
-        chart_title, chart_control = st.columns([3, 1], vertical_alignment="bottom")
-        with chart_title:
-            st.markdown("<div class='section-label'>Prediksi & harga aktual</div>", unsafe_allow_html=True)
-            st.caption("Refit live pada data terbaru, terpisah dari evaluasi Colab. Sumbu tanggal adalah tanggal target t+1; area berarsir adalah interval 90%.")
-        with chart_control:
-            chart_period = st.selectbox("Rentang grafik", ["90 hari terakhir", "30 hari terakhir", "Seluruh test set"],
-                                       key="forecast_period", label_visibility="collapsed")
-
-        dates_test = pd.DatetimeIndex(result["hist_target_dates"])
-        hist_true  = result["hist_true"]
-        hist_med   = result["hist_med"]
-        hist_lo    = result["hist_lo"]
-        hist_hi    = result["hist_hi"]
-
-        n_valid = min(len(dates_test), len(hist_true), len(hist_med),
-                      len(hist_lo), len(hist_hi))
-        dates_test = dates_test[:n_valid]
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=list(dates_test) + list(dates_test[::-1]),
-            y=list(hist_hi[:n_valid]) + list(hist_lo[:n_valid][::-1]),
-            fill="toself", fillcolor=TEAL_SOFT,
-            line=dict(color="rgba(0,0,0,0)"),
-            name="Interval 90%", hoverinfo="skip"
-        ))
-        fig.add_trace(go.Scatter(
-            x=dates_test, y=hist_true[:n_valid],
-            mode="lines", name="Harga Aktual",
-            line=dict(color=TEXT, width=1.5)
-        ))
-        fig.add_trace(go.Scatter(
-            x=dates_test, y=hist_med[:n_valid],
-            mode="lines", name="Prediksi Median",
-            line=dict(color=TEAL, width=1.5, dash="dash")
-        ))
-        fig.add_trace(go.Scatter(
-            x=[pred_date], y=[pred_med],
-            mode="markers", name=f"Prediksi {pred_date.strftime('%d %b')}",
-            marker=dict(color=ACCENT, size=9, symbol="circle", line=dict(color=SURFACE, width=2)),
-        ))
-        fig.add_trace(go.Scatter(
-            x=[pred_date, pred_date], y=[pred_lo, pred_hi], mode="lines",
-            name="Interval prediksi berikutnya", line=dict(color=ACCENT, width=3)
-        ))
-        fig.update_layout(
-            template="plotly_white", height=400,
-            margin=dict(l=20, r=24, t=55, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0,
-                        font=dict(color=TEXT_DIM, size=11)),
-            yaxis=dict(tickprefix="$", tickformat=",", gridcolor=GRID, side="right", nticks=6),
-            xaxis=dict(showgrid=False, tickformat="%d %b", nticks=6),
-            hovermode="x unified",
-        )
-        if chart_period != "Seluruh test set":
-            window_days = 90 if chart_period == "90 hari terakhir" else 30
-            fig.update_xaxes(range=[pred_date - timedelta(days=window_days), pred_date + timedelta(days=2)])
-        fig.update_traces(hovertemplate="%{y:$,.0f}<extra>%{fullData.name}</extra>", selector=dict(mode="lines"))
-        render_chart(fig)
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("<div class='section-label'>Detail prediksi berikutnya</div>",
-                        unsafe_allow_html=True)
-            width_pct = (pred_hi - pred_lo) / pred_med * 100
-            st.markdown(f"""
-            <section class='detail-panel' aria-label='Detail prediksi'>
-            <dl>
-            <div class='detail-row'><dt>Tanggal prediksi</dt><dd>{pred_date.strftime('%d %B %Y')}</dd></div>
-            <div class='detail-row'><dt>Harga acuan · {last_date.strftime('%d %b')}</dt><dd>${last_close:,.0f}</dd></div>
-            <div class='detail-row'><dt>Prediksi median</dt><dd>${pred_med:,.0f} <span class='{delta_class}'>({delta_pct:+.2f}%)</span></dd></div>
-            <div class='detail-row'><dt>Batas bawah · Q05</dt><dd>${pred_lo:,.0f}</dd></div>
-            <div class='detail-row'><dt>Batas atas · Q95</dt><dd>${pred_hi:,.0f}</dd></div>
-            <div class='detail-row'><dt>Lebar interval</dt><dd>${pred_hi-pred_lo:,.0f} · {width_pct:.1f}%</dd></div>
-            <div class='detail-row'><dt>Conformal margin</dt><dd>{result["conf_margin"]:.5f} <small>(log-scale)</small></dd></div>
-            </dl>
-            <p class='detail-note'>Target cakupan interval adalah 90% dalam jangka panjang.
-            Harga aktual tetap dapat berada di luar rentang ini.</p>
-            </section>
-            """, unsafe_allow_html=True)
-
-        with col_b:
-            st.markdown("<div class='section-label'>Kondisi pasar pada data acuan</div>",
-                        unsafe_allow_html=True)
-            sent_label = (
-                "Extreme Greed" if last_sent > 0.6 else
-                "Greed"         if last_sent > 0.2 else
-                "Neutral"       if last_sent > -0.2 else
-                "Fear"          if last_sent > -0.6 else
-                "Extreme Fear"
-            )
-            sent_color = (
-                GREEN if last_sent > 0.2 else
-                TEXT_DIM if last_sent > -0.2 else
-                RED
-            )
-            regime_desc = {
-                0: "Bear — volatilitas tinggi, return negatif dominan",
-                1: "Sideways — pasar konsolidasi, return mendekati nol",
-                2: "Bull — tren naik, return positif dominan"
-            }[last_regime]
-            netflow_caption = (
-                "(nilai historis terakhir — on-chain belum live, lihat peringatan di atas)"
-                if not is_onchain_fresh else ""
-            )
-            st.markdown(f"""
-            <section class='detail-panel' aria-label='Kondisi pasar'>
-            <div class='market-item'>
-                <div class='market-heading'><span>Regime HMM</span><strong class='{regime_class}'>{regime_label}</strong></div>
-                <p>{regime_desc}</p>
-            </div>
-            <div class='market-item'>
-                <div class='market-heading'><span>Sentimen pasar</span><strong style='color:{sent_color}'>{sent_label}</strong></div>
-                <p>Skor polaritas <span class='tnum'>{last_sent:+.2f}</span> pada skala −1 hingga +1.</p>
-            </div>
-            <div class='market-item'>
-                <div class='market-heading'><span>On-chain netflow</span><strong>{last_netflow:+,.0f} BTC</strong></div>
-                <p>{"Arus keluar bersih dari bursa (outflow − inflow)" if last_netflow > 0
-                    else "Arus masuk bersih ke bursa (outflow − inflow)" if last_netflow < 0
-                    else "Arus masuk dan keluar bursa seimbang"}</p>
-                <p style='color:{AMBER}'>{netflow_caption}</p>
-            </div>
-            <div class='market-item'>
-                <div class='market-heading'><span>Netflow terbobot sentimen</span><strong>{last_netflow * (1 + last_sent):+,.0f}</strong></div>
-                <p>Fitur usulan · Netflow × (1 + polarity)</p>
-            </div>
-            </section>
-            """, unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class='disclaimer-box'>
-        {WARN_ICON}<b>Disclaimer:</b> Dashboard ini merupakan prototipe akademik sebagai bagian dari
-        Tugas Akhir Program Studi Teknologi Rekayasa Perangkat Lunak, Universitas Gadjah Mada.
-        Prediksi yang ditampilkan <b>bukan merupakan nasihat investasi</b> dan tidak boleh
-        dijadikan dasar keputusan finansial.
-        </div>
-        """, unsafe_allow_html=True)
+        render_prediction(result, render_chart)
 
 # ============================================================
 # HALAMAN 2: KOMPARASI MODEL

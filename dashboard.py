@@ -30,8 +30,10 @@ from plotly.subplots import make_subplots
 from scipy.special import logsumexp
 
 # Frozen Colab results: 10 runs, 84 metric rows, 410 statistical rows.
+# Frozen Colab result: primary raw run, 8 metric rows, 15 tests (block 14).
 # Base64 encodes compressed JSON data only; it never executes code.
 _EXPERIMENTS_SHA256 = "d8d6969ee5546e05252e0a545128d37f728a308baeb655b861e48bd852d61c2a"
+_EXPERIMENTS_SHA256 = "8b375db9099072c533da99f81b2b1f255a631e1b56c8fc9f6522b17c8030696d"
 _EXPERIMENTS_B64 = (
     "eNrtvdtyZMmVJfYuM/0DrJ4kU+eh75tfik9sDntIm6kmVUWNZCaTpQWAQBW6kJdJIElRY/1d8z5fprUOMoFABPwgAolEAgfRTWYVEwdx2e6+L8"
     "v3Xuu//c//08HBd+dHvyzfLF7/bfnh/PTd2+++P5B/Gv/+w/L849nFOX9wenK6PH59vLhY4sffadL8StKrVL779OTHt+f4wX/j/+D/XPz99cnp"
@@ -298,6 +300,34 @@ _EXPERIMENTS_B64 = (
     "ZUPcJ5TTOVkqcO628MVieYK9t/TD40XBSWl2fFyWh1huQ+q9aItFxumukeXwCE5haUdpcVJ3/yTbxX18tCMcklSzHifEH/PDdnR8mI7clkdwiy"
     "ewRRwW7EnVY1m2RfGssjyU4yOsWan44+E+2tpxdl3AH5YjVNxYpeNDkZaOtZyc0FNqOzlRq8vAkRL3o0PFBhc4ykPkg4ZIFEdj5Efc//f/HzzB"
     "zCk="
+    "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"
+    "zIkZKF1K4IK26GfyseAgQeEQrSEL2rkGpEAPBOp3esJdg4sHW+zu4O+0jN9e+b3sAmYd5Kgnny5iVMblsdaW8GA0q+BkW9zotYPCpTg0lEIwxj"
+    "TK4xDaDlBqpCxsld28B0X2OT7BOKnj2BARgLASbHpzIJJsIJwHvXLon6yiPmhD6JpoujiT4Lzj5dg8GgWOPcYiy8NjkDIU5TZxa4xvI/35Bsu0"
+    "W283ssriZdVebF/XqX103qdZ3dR96qbDwe7R2bad7r4wT5+smzSbyldWRG3/6KenZ8+fPX/67fT06auz50/Op09enL58fPb8/MWP5bx7W+RHoD"
+    "/4qlePp/PdwPiRWi7W7TXT04H/6f5r8fUC2vXwMf3Z/mv4Kr3eThZYQmon0DqBiGozQSeYLKD8BFPrtpycpXeTRd1Xfbp6gxu7apYuUj1JbWrq"
+    "ru52n9r/OunmqakW++Guaru6r98KorL48AH4B9DT7jKhgOWT8xfh+aTQ5Bd2huNyFWbzConaVHGxRKpZBiQfaxNRWjrn/cxz4qVfLOUIFZRbYj"
+    "RZcZevKMtJQZWtfEyLxXxulti0tEjzWQpx7mYVknHimal4ZpHvlzZxQuBMYRl5UZnk3cJYkPt/pPgIxw=="
 )
 
 FEATURE_COLS = [
@@ -307,6 +337,7 @@ FEATURE_COLS = [
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
 CORE_VERSION = "2026.10.08-singlefile-v2"
+CORE_VERSION = "2026.10.08-singlefile-v3"
 
 
 def filter_hmm(model, observations):
@@ -495,6 +526,7 @@ def build_forecast(prices, sentiment, onchain, onchain_live=False):
         onchain_staleness_days=(prices.index.max() - last_real).days, pipeline_metadata=metadata)
 
 BASELINES = ["XGBoost", "LightGBM", "Random Forest", "SVR", "LSTM", "Model Usulan", "Naive"]
+BASELINES = ["XGBoost", "LightGBM", "Random Forest", "SVR", "LSTM", "Model Usulan"]
 METRICS = ["MAE", "RMSE", "MAPE", "R2", "DirAcc", "Coverage", "AvgWidth", "PinballLo", "PinballHi"]
 
 
@@ -556,6 +588,8 @@ def render_inference_note(run, block):
     if run["family_size"]:
         st.caption(f"Stationary bootstrap {run['bootstrap_resamples']:,} resample · blok {block} hari · "
                    f"Holm{run['family_size']} · CI95 basic pointwise, bukan simultan. "
+    st.caption(f"Stationary bootstrap {run['bootstrap_resamples']:,} resample · blok {block} hari · "
+               f"Holm{run['family_size']} · CI95 basic pointwise, bukan simultan.")
                    "Blok 14 adalah analisis utama; 7/28 adalah sensitivitas.")
         if run["kind"] == "multiwindow":
             st.caption("Holm45 mencakup tiga fold per varian; memilih tahun tidak menghitung ulang koreksi. "
@@ -632,11 +666,13 @@ def render_metric_charts(run, render_chart, accent):
             value = f"{full[metric]:.2f}%" if metric == "Coverage" else f"${full[metric]:,.2f}"
             column.metric(label, value)
         st.caption("Coverage empiris pada run terpilih; target nominal 90%. Ini tidak menjamin cakupan live "
+        st.caption("Coverage empiris pada eksperimen utama; target nominal 90%. Ini tidak menjamin cakupan live "
                    "atau cakupan sama pada setiap periode, khususnya ketika netflow tertinggal.")
 
 
 def render_experiments(render_table, render_chart, accent):
     """Present one main result; disclose sensitivity/history only on request."""
+    """Present only the verified primary causal raw experiment."""
     try:
         data = load_experiments()
     except (OSError, ValueError, KeyError) as error:
@@ -666,8 +702,10 @@ def render_experiments(render_table, render_chart, accent):
     render_table(display_metrics(main_comparison_frame(primary)), label="Hasil evaluasi utama · raw kausal")
 
     # Keep technical selectors inside collapsed sections, as in the original UI.
+    # The main analysis uses the fixed block-14 protocol; no experiment selector.
     with st.expander("Uji Signifikansi Statistik (stationary bootstrap, N=20000, Holm15, CI 95%)"):
         block = st.selectbox("Panjang blok rata-rata (hari)", [14, 7, 28], key="main_bootstrap_block")
+        block = 14
         render_inference_note(primary, block)
         table = selected_statistics(primary, block)
         render_table(table[table.Metrik.eq("MAE") & table.Pembanding.isin(BASELINES)], label="Uji MAE utama")

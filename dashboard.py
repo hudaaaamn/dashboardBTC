@@ -412,7 +412,7 @@ def render_experiments(render_table, render_chart, accent):
 
 
 def render_prediction(result, render_chart):
-    """Put the forecast first and retain technical context below the chart."""
+    """Put the forecast first, with concise model information below the chart."""
     last_close, last_date = result["last_close"], result["last_date"]
     pred_med, pred_lo, pred_hi = result["pred_med"], result["pred_lo"], result["pred_hi"]
     pred_date = result["pred_date"]
@@ -426,8 +426,6 @@ def render_prediction(result, render_chart):
     median_position = 50 if width == 0 else min(100, max(0, (pred_med - pred_lo) / width * 100))
     price_age = (pd.Timestamp(datetime.now(timezone.utc).date()) - pd.Timestamp(last_date.date())).days
     chain_age = result["onchain_staleness_days"]
-    metadata = result["pipeline_metadata"]
-    last_delta = metadata.get("hmm_last_delta")
     st.markdown(f"""
     <header class='page-header'>
         <h2>Prediksi harga Bitcoin</h2>
@@ -457,21 +455,17 @@ def render_prediction(result, render_chart):
 
     if price_age > 1:
         st.markdown(f"""
-        <details class='warn-box'><summary>Harga acuan tertinggal {price_age} hari.</summary>
+        <details class='warn-box'><summary>{WARN_ICON}<span class='notice-title'>Harga acuan tertinggal {price_age} hari.</span></summary>
         <div class='notice-body'>Prediksi mengikuti harga penutupan terakhir, {format_date_id(last_date)}.
         Tekan <b>Refresh Data</b> untuk memeriksa ketersediaan harga yang lebih baru.</div></details>
         """, unsafe_allow_html=True)
     if chain_age > 1:
         st.markdown(f"""
-        <details class='warn-box'><summary>Data on-chain memakai catatan terakhir {format_date_id(result['onchain_last_real_date'])}.</summary>
+        <details class='warn-box'><summary>{WARN_ICON}<span class='notice-title'>Data on-chain memakai catatan terakhir {format_date_id(result['onchain_last_real_date'])}.</span></summary>
         <div class='notice-body'>Nilai netflow tertinggal {chain_age} hari dari harga acuan dan diteruskan
         dari observasi terakhir (forward-fill). Nilai tersebut tidak menggambarkan aktivitas bursa terbaru.
         Hasil pengujian historis belum mengukur akurasi prediksi dalam kondisi ini.</div></details>
         """, unsafe_allow_html=True)
-    if last_delta is not None and last_delta < 0:
-        st.markdown("<div class='model-caution'>"
-                    + WARN_ICON + "Ada catatan pada pelatihan model. Baca penjelasannya di bagian Informasi model."
-                    + "</div>", unsafe_allow_html=True)
 
     heading, control = st.columns([3, 1], vertical_alignment="bottom")
     with heading:
@@ -544,20 +538,6 @@ def render_prediction(result, render_chart):
                     "untuk memprediksi harga satu hari setelah tanggal data acuan.")
         st.caption("HMM membaca kondisi pasar dengan raw filtering kausal. Model dilatih ulang saat data "
                    "diperbarui. Data dan bobotnya dapat berbeda dari eksperimen historis di Colab.")
-        if last_delta is not None and last_delta < 0:
-            st.warning("Nilai likelihood HMM turun pada iterasi pelatihan terakhir. "
-                       "Hasil prediksi perlu dibaca bersama catatan numerik ini.")
-        st.caption("Interval dikalibrasi dengan target cakupan 90%; cakupan pada kondisi pasar baru dapat berbeda. "
-                   "Waktu publikasi intraday sumber belum diaudit.")
-        st.markdown(f"""
-        | Keterangan | Nilai |
-        |---|---|
-        | Data pelatihan | {metadata['train_n']:,} baris, hingga {metadata['train_end']} |
-        | Data kalibrasi | {metadata['calibration_n']:,} baris, hingga {metadata['calibration_end']} |
-        | Data uji internal | {metadata['test_n']:,} baris |
-        | Jeda pada batas data | {metadata['purge_days']} hari |
-        """)
-        st.caption(f"Versi dashboard {CORE_VERSION}. Metadata perhitungan tetap disimpan bersama hasil model.")
     st.markdown("<div class='disclaimer-box'>Prototipe penelitian Tugas Akhir, Sekolah Vokasi UGM. "
                 "Prediksi merupakan estimasi model dan bukan nasihat investasi.</div>", unsafe_allow_html=True)
 
@@ -603,7 +583,7 @@ TEXT_DIM = "#586473"
 TEXT_MUTE = "#637080"
 ACCENT = "#ee9b32"
 ACCENT_SOFT = "rgba(248,161,56,0.14)"
-# Forecasts use the same product accent; red/green only encode market states.
+# Forecasts use the product accent; red also marks data warnings.
 TEAL = ACCENT
 TEAL_SOFT = ACCENT_SOFT
 GREEN = "#287451"
@@ -630,6 +610,7 @@ st.markdown("""
   --line: #e1e5ea;
   --orange-ink: #9e570e;
   --orange: #ee9b32;
+  --warning: #b42318;
   color-scheme: light;
 }
 html, body, .stApp { background: #f7f8fa; color: var(--ink); }
@@ -735,10 +716,24 @@ code, .stMarkdown code { color: var(--orange-ink); background: #fff1df; }
 .info-box b { color: var(--ink); }
 .info-box summary { cursor: pointer; font-weight: 500; color: var(--ink); }
 .info-box .notice-body { margin-top: 10px; max-width: 90ch; }
-.warn-box { padding: 12px 16px; border-left: 2px solid #c48732; background: #fbf5e9; border-radius: 0 7px 7px 0; color: #785319; font-size: 12px; line-height: 1.7; margin: 0 0 3px; }
-.warn-box summary { cursor: pointer; font-weight: 500; }
-.warn-box .notice-body { margin-top: 8px; max-width: 85ch; color: #6b5b42; }
-.model-caution { color: #785319; font-size: 12px; line-height: 1.65; padding: 2px 0 0; }
+/* Data warnings use a red symbol, a neutral surface, and readable dark text. */
+.warn-box { padding: 14px 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); font-size: 13px; line-height: 1.6; margin: 0; }
+.warn-box summary { display: flex; align-items: flex-start; gap: 10px; list-style: none; cursor: pointer; font-weight: 600; border-radius: 3px; }
+.warn-box summary::-webkit-details-marker { display: none; }
+.warn-box summary::marker { content: ''; }
+.warn-box .notice-icon { flex: 0 0 17px; width: 17px; height: 17px; margin: 2px 0 0; color: var(--warning); font-size: 12px; line-height: 1; }
+.warn-box .notice-title { flex: 1; min-width: 0; }
+.warn-box summary::after { content: ''; flex: 0 0 6px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); margin: 5px 3px 0 8px; transition: transform .16s ease; }
+.warn-box[open] summary::after { transform: rotate(225deg); margin-top: 8px; }
+.warn-box summary:hover .notice-title { text-decoration: underline; text-underline-offset: 3px; }
+.warn-box .notice-body { margin: 8px 24px 0 27px; max-width: 75ch; color: var(--muted); }
+.about-dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 24px 40px; padding: 8px 0 4px; }
+.about-dashboard h3 { font-size: 13px; font-weight: 600; margin: 0 0 12px; padding: 0; }
+.about-dashboard p { font-size: 13px; margin: 0 0 10px; max-width: 60ch; }
+.about-sources { margin: 0; font-size: 13px; line-height: 1.65; }
+.about-sources > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; margin-bottom: 6px; }
+.about-sources dt { color: var(--muted); }
+.about-sources dd { color: var(--ink); margin: 0; }
 .disclaimer-box { color: var(--muted); font-size: 11px; line-height: 1.7; padding: 14px 0 0; margin-top: 8px; border-top: 1px solid var(--line); max-width: 100ch; }
 .notice-icon { display: inline-grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; font-weight: 650; margin-right: 6px; }
 [data-testid="stExpander"] { background: transparent; border-color: var(--line); border-radius: 8px; }
@@ -814,6 +809,7 @@ table.analytics-table th:first-child { background: #f0f3f5; }
   .data-status { gap: 8px 12px; }
   .status-date { margin-left: 0; width: 100%; }
   .detail-row { gap: 15px; font-size: 12px; }
+  .about-dashboard { grid-template-columns: 1fr; gap: 22px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -1296,20 +1292,21 @@ with tab_data:
 
 with st.expander("Tentang dashboard ini"):
     st.markdown(f"""
-    <div class='info-box' style='margin-top:0'>
-    <b>Versi dashboard:</b> {CORE_VERSION}<br><br>
-    <b>Sumber data:</b><br>
-    • Harga: Yahoo Finance<br>
-    • Sentimen: Crypto Fear & Greed Index<br>
-    • On-Chain: CoinMetrics<br><br>
-    <b>Model yang berjalan live di dashboard ini:</b><br>
-    HMM raw filtering kausal + XGBoost Quantile + Conformal Prediction.
-    <span style='font-size:12px;color:{TEXT_MUTE}'>
-    Ini satu-satunya model yang dihitung ulang secara live untuk halaman prediksi saja. Semua model, dari model
-    pembanding hingga usulan pada halaman "Komparasi Model" adalah referensi statis
-    dari notebook eksperimen terpisah, bukan hasil live.
-    </span>
-    </div>
+    <section class='about-dashboard' aria-label='Tentang dashboard'>
+        <div>
+            <h3>Sumber data</h3>
+            <dl class='about-sources'>
+                <div><dt>Harga</dt><dd>Yahoo Finance</dd></div>
+                <div><dt>Sentimen</dt><dd>Crypto Fear &amp; Greed Index</dd></div>
+                <div><dt>On-chain</dt><dd>CoinMetrics</dd></div>
+            </dl>
+        </div>
+        <div>
+            <h3>Model prediksi</h3>
+            <p>HMM dengan raw filtering kausal, XGBoost Quantile, dan Conformal Prediction.</p>
+            <p>Prediksi dihitung saat model dijalankan. Tab Komparasi Model menampilkan hasil eksperimen historis.</p>
+        </div>
+    </section>
     <div class='disclaimer-box'>
     {WARN_ICON}<b>Bukan nasihat investasi.</b> Dashboard ini merupakan prototipe
     akademik bagian dari Tugas Akhir Program Studi Teknologi Rekayasa

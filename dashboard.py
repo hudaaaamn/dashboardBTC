@@ -1,13 +1,4 @@
-# dashboard.py — Bitcoin Price Dashboard / TA Huda
-# Revisi 8 Oktober 2026 — deployment SATU FILE.
-# Cukup ganti seluruh isi dashboard.py di repository Streamlit Anda.
-# Fungsi model, UI, dan hasil Colab terverifikasi sudah berada di file ini.
-# Tidak perlu dashboard_core.py, dashboard_results.py, atau folder dashboard_data.
-# Paket pihak ketiga sama dengan dashboard sebelumnya; SciPy adalah dependensi
-# hmmlearn. Rentang lama Streamlit >=1.40 didukung melalui adapter UI.
-# Jalankan: python -m streamlit run dashboard.py
-# Komparasi adalah hasil eksperimen tersimpan; prediksi live melakukan refit.
-# Netflow stale dan batasan statistik ditampilkan secara eksplisit.
+# dashboard.py Bitcoin Price Dashboard
 
 import base64
 import hashlib
@@ -69,7 +60,7 @@ FEATURE_COLS = [
     "exchange_netflow", "netflow_change", "netflow_ma_7", "polarity",
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
-CORE_VERSION = "2026.10.08-singlefile-v4"
+CORE_VERSION = "2026.10.12-singlefile-m10"
 
 
 def filter_hmm(model, observations):
@@ -875,20 +866,81 @@ def fetch_price(start="2021-01-01"):
     df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
     return df
 
+def _source_records(payload):
+    """Accept a nonempty record list, not an API error masquerading as data."""
+    if not isinstance(payload, dict):
+        raise ValueError("Struktur respons sumber tidak valid.")
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("error"):
+        raise ValueError("Sumber melaporkan kegagalan data.")
+    records = payload.get("data")
+    if not isinstance(records, list) or not records or not all(isinstance(row, dict) for row in records):
+        raise ValueError("Daftar observasi sumber kosong atau tidak valid.")
+    return records
+
+
+def _validate_onchain(frame, start):
+    """Preserve missing historical flows; reject malformed or unusable data."""
+    columns = ["time", "FlowInExNtv", "FlowOutExNtv"]
+    if frame.empty or not set(columns).issubset(frame.columns):
+        raise ValueError("Kolom on-chain tidak lengkap.")
+    frame = frame[columns].copy()
+    dates = pd.to_datetime(frame.pop("time"), errors="coerce", utc=True, format="mixed")
+    if dates.isna().any() or (dates != dates.dt.normalize()).any() or dates.duplicated().any():
+        raise ValueError("Tanggal on-chain tidak valid atau berulang.")
+    frame.index = pd.DatetimeIndex(dates.dt.tz_localize(None), name="time")
+    for col in ["FlowInExNtv", "FlowOutExNtv"]:
+        raw = frame[col]
+        missing = raw.isna() | raw.astype(str).str.strip().eq("")
+        numeric = pd.to_numeric(raw, errors="coerce")
+        if ((~missing & numeric.isna()).any()
+                or (~np.isfinite(numeric.dropna().to_numpy(dtype=float))).any()
+                or numeric.dropna().lt(0).any()
+                or raw.map(lambda value: isinstance(value, (bool, np.bool_))).any()):
+            raise ValueError("Nilai arus on-chain tidak valid.")
+        frame[col] = numeric
+    frame["exchange_netflow"] = frame["FlowOutExNtv"] - frame["FlowInExNtv"]
+    frame = frame.sort_index().loc[start:]
+    observed = frame["exchange_netflow"].dropna()
+    if observed.empty or not np.isfinite(observed.to_numpy(dtype=float)).all():
+        raise ValueError("Observasi netflow valid tidak tersedia pada rentang yang diminta.")
+    return frame[["exchange_netflow", "FlowInExNtv", "FlowOutExNtv"]]
+
+
 @st.cache_data(ttl=3600)
 def fetch_sentiment():
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
-        data = r.json()["data"]
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
-        df = df[["date","value","value_classification"]].set_index("date").sort_index()
+        r.raise_for_status()
+        df = pd.DataFrame(_source_records(r.json()))
+        columns = ["timestamp", "value", "value_classification"]
+        if not set(columns).issubset(df.columns):
+            raise ValueError("Kolom sentimen tidak lengkap.")
+        timestamps = pd.to_numeric(df["timestamp"], errors="coerce")
+        values = pd.to_numeric(df["value"], errors="coerce")
+        for numeric in [timestamps, values]:
+            if numeric.isna().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all():
+                raise ValueError("Angka sentimen tidak valid.")
+        if (timestamps.le(0).any() or timestamps.mod(1).ne(0).any()
+                or not values.between(0, 100).all() or values.mod(1).ne(0).any()
+                or df[["timestamp", "value"]].map(lambda value: isinstance(value, (bool, np.bool_))).any().any()):
+            raise ValueError("Rentang angka sentimen tidak valid.")
+        dates = pd.to_datetime(timestamps, unit="s", utc=True, errors="coerce")
+        if dates.isna().any() or dates.dt.normalize().duplicated().any():
+            raise ValueError("Tanggal sentimen tidak valid atau berulang.")
+        if not df["value_classification"].map(lambda value: isinstance(value, str) and bool(value.strip())).all():
+            raise ValueError("Label sentimen tidak valid.")
+        df["date"] = dates.dt.normalize().dt.tz_localize(None)
+        df["value"] = values.astype(int)
+        df = df[["date", "value", "value_classification"]].set_index("date").sort_index()
         mapping = {"Extreme Fear":-1,"Fear":-0.5,"Neutral":0,"Greed":0.5,"Extreme Greed":1}
         df["polarity"] = df["value_classification"].map(mapping)
-        df["polarity"] = df["polarity"].fillna((df["value"].astype(int)-50)/50)
+        df["polarity"] = df["polarity"].fillna((df["value"]-50)/50)
         return df, True
-    except Exception:
-        return pd.DataFrame(), False
+    except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
+        # Raising prevents cache_data from storing a failed response for an hour.
+        # Keep URLs, credentials and response bodies out of user-facing errors.
+        raise RuntimeError("Sentimen riil tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
 
 @st.cache_data(ttl=3600)
 def fetch_onchain(start="2021-01-01"):
@@ -927,28 +979,25 @@ def fetch_onchain(start="2021-01-01"):
             }
             r = requests.get(url, params=params, timeout=30)
             r.raise_for_status()
-            payload = r.json()["data"]
-            if len(payload) > 0:
-                df = pd.DataFrame(payload)
-                df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None)
-                df = df.set_index("time").sort_index()
-                df["FlowInExNtv"]  = pd.to_numeric(df["FlowInExNtv"], errors="coerce")
-                df["FlowOutExNtv"] = pd.to_numeric(df["FlowOutExNtv"], errors="coerce")
-                df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
-                df = df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:]
-                if len(df.dropna()) > 0:
-                    return df, True
-        except Exception:
+            payload = r.json()
+            records = _source_records(payload)
+            if payload.get("next_page_token"):
+                raise ValueError("Respons on-chain belum lengkap; gunakan fallback.")
+            if any("asset" in row and row["asset"] != "btc" for row in records):
+                raise ValueError("Aset pada respons on-chain tidak sesuai.")
+            return _validate_onchain(pd.DataFrame(records), start), True
+        except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
             pass  # jatuh ke fallback gratis di bawah
 
     # --- Fallback: CSV Community gratis (mungkin sudah berhenti update) ---
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
-    r = requests.get(url, timeout=30)
-    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-    df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    df = df.set_index("time")
-    df["exchange_netflow"] = df["FlowOutExNtv"] - df["FlowInExNtv"]
-    return df[["exchange_netflow","FlowInExNtv","FlowOutExNtv"]].loc[start:], False
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+        return _validate_onchain(df, start), False
+    except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
+        raise RuntimeError("Data on-chain tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
 
 # ============================================================
 # FUNGSI FEATURE ENGINEERING + MODEL

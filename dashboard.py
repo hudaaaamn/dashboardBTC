@@ -1,5 +1,4 @@
-# dashboard.py — Bitcoin Price Dashboard / TA Huda
-# M11 TEMPORARY TEST BUILD
+# dashboard.py Bitcoin Price Dashboard
 
 import base64
 import hashlib
@@ -61,7 +60,7 @@ FEATURE_COLS = [
     "exchange_netflow", "netflow_change", "netflow_ma_7", "polarity",
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
-CORE_VERSION = "2026.10.12-singlefile-m11-test"
+CORE_VERSION = "2026.10.12-singlefile-m10"
 
 
 def filter_hmm(model, observations):
@@ -843,149 +842,6 @@ def render_chart(fig, **kwargs):
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
 # ============================================================
-"""Inserted into a temporary single-file dashboard; no global request patching."""
-import hmac
-import time
-import uuid
-
-M11_BUILD = "2026.10.12-singlefile-m11-test"
-M11_CASES = {
-    "control": "Kontrol — sumber asli",
-    "onchain_unavailable": "I-04 — semua jalur on-chain HTTP 503",
-    "sentiment_unavailable": "I-05 — sentimen HTTP 503",
-    "premium_unavailable": "Premium HTTP 503 — fallback CSV asli",
-    "recovery": "Pemulihan — sumber asli, cache uji baru",
-}
-M11_BASELINE_SHA256 = "81075d4a149de9648b06b6398b4d220aff01dcfcd72f5c6ade541e8a334a63fa"
-
-
-def _m11_secret(name):
-    try:
-        value = st.secrets.get(name)
-    except Exception:
-        value = None
-    return value or os.environ.get(name, "")
-
-
-def _m11_new_run(mode):
-    st.session_state.m11_run = mode + ":" + uuid.uuid4().hex
-    st.session_state.m11_events = []
-    st.session_state.m11_started_utc = datetime.now(timezone.utc).isoformat()
-    return st.session_state.m11_run
-
-
-def _m11_panel():
-    st.session_state.m11_authorized = False
-    if st.query_params.get("m11") != "1":
-        return ""
-    st.subheader("Pengujian M11 — gangguan terkontrol")
-    st.caption(M11_BUILD)
-    secret = _m11_secret("M11_TEST_TOKEN")
-    if not isinstance(secret, str) or len(secret) < 24:
-        st.error("Mode uji terkunci. Atur M11_TEST_TOKEN minimal 24 karakter di Streamlit Secrets.")
-        st.stop()
-    supplied = st.text_input("Token penguji M11", type="password", key="m11_token")
-    if not hmac.compare_digest(supplied.encode(), secret.encode()):
-        st.info("Masukkan token penguji untuk membuka skenario.")
-        st.stop()
-    st.session_state.m11_authorized = True
-    st.warning("Sesi pengujian. HTTP 503 diinjeksikan hanya pada sesi ini; hasilnya bukan kejadian outage penyedia yang nyata.")
-    mode = st.selectbox("Skenario M11", list(M11_CASES), format_func=M11_CASES.get, key="m11_mode")
-    if mode != st.session_state.get("m11_active_mode"):
-        st.session_state.m11_active_mode = mode
-        _m11_new_run(mode)
-        st.session_state.dashboard_started = False
-        st.session_state.comparison_only = False
-    if mode == "premium_unavailable" and not _m11_secret("COINMETRICS_API_KEY"):
-        st.info("SKIP: COINMETRICS_API_KEY tidak tersedia; jalur premium tidak dapat diuji pada konfigurasi ini.")
-        st.stop()
-    st.caption("Tekan Muat & Jalankan Model atau Refresh Data. Simpan bukti JSON dan tangkapan layar setelah selesai.")
-    return st.session_state.m11_run
-
-
-def _m11_mode(case):
-    if not case:
-        return ""
-    parts = case.split(":")
-    if (len(parts) != 2 or parts[0] not in M11_CASES or len(parts[1]) != 32
-            or any(c not in "0123456789abcdef" for c in parts[1])
-            or not st.session_state.get("m11_authorized", False)):
-        raise ValueError("Konteks pengujian M11 tidak valid.")
-    return parts[0]
-
-
-def _m11_event(case, source, **fields):
-    if case:
-        _m11_mode(case)
-        event = {"utc": datetime.now(timezone.utc).isoformat(), "source": source, **fields}
-        st.session_state.m11_events = st.session_state.get("m11_events", []) + [event]
-
-
-def _m11_get(url, *, m11_case="", **kwargs):
-    mode = _m11_mode(m11_case)
-    if url == "https://api.alternative.me/fng/?limit=0":
-        source = "sentiment"
-    elif url == "https://api.coinmetrics.io/v4/timeseries/asset-metrics":
-        source = "onchain_premium"
-    elif url == "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv":
-        source = "onchain_csv"
-    else:
-        raise ValueError("Sumber pengujian tidak dikenal.")
-    inject = ((mode == "sentiment_unavailable" and source == "sentiment")
-              or (mode == "onchain_unavailable" and source.startswith("onchain_"))
-              or (mode == "premium_unavailable" and source == "onchain_premium"))
-    start = time.perf_counter()
-    if inject:
-        response = requests.Response()
-        response.status_code = 503
-        # Deliberately parseable bodies: verifies HTTP status is checked first.
-        if source == "onchain_csv":
-            body = "time,FlowInExNtv,FlowOutExNtv\n2026-05-23,10,15\n"
-        elif source == "onchain_premium":
-            body = json.dumps({"data": [{"asset": "btc", "time": "2026-05-23T00:00:00Z", "FlowInExNtv": "10", "FlowOutExNtv": "15"}]})
-        else:
-            body = json.dumps({"data": [{"timestamp": "1780012800", "value": "70", "value_classification": "Greed"}]})
-        response._content = body.encode("utf-8")
-        response.encoding = "utf-8"
-        response.url = url  # No API key/query params included in injected errors.
-    else:
-        try:
-            response = requests.get(url, **kwargs)
-        except requests.RequestException as error:
-            _m11_event(m11_case, source, injected=False, error_type=type(error).__name__,
-                       seconds=round(time.perf_counter() - start, 4))
-            raise
-    _m11_event(m11_case, source, injected=inject, status=response.status_code,
-               seconds=round(time.perf_counter() - start, 4))
-    return response
-
-
-def _m11_receipt(case, success, error_type):
-    mode = _m11_mode(case)
-    events = st.session_state.get("m11_events", [])
-    return {
-        "build": M11_BUILD, "baseline_m10_sha256": M11_BASELINE_SHA256,
-        "test_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "case": mode, "run_id": case.split(":")[1],
-        "started_utc": st.session_state.get("m11_started_utc"),
-        "observed_utc": datetime.now(timezone.utc).isoformat(),
-        "controlled_injection": True, "provider_outage_observed": False,
-        "pipeline_success": success, "error_type": error_type,
-        "forecast_function_entered": any(e["source"] == "forecast" and e.get("phase") == "start" for e in events),
-        "cache_policy": "Unique session/run argument for sentiment, onchain and pipeline. Price cache may be shared. Test refresh does not clear global cache.",
-        "events": events,
-    }
-
-
-def _m11_render_receipt(case, success, error_type):
-    receipt = _m11_receipt(case, success, error_type)
-    st.subheader("Bukti sesi M11")
-    st.json(receipt)
-    st.download_button("Unduh bukti M11 (JSON)", json.dumps(receipt, ensure_ascii=False, indent=2),
-                       file_name="M11_" + receipt["case"] + "_" + receipt["run_id"] + ".json",
-                       mime="application/json")
-
-
 @st.cache_data(ttl=3600)
 def fetch_price(start="2021-01-01"):
     import yfinance as yf
@@ -1052,9 +908,9 @@ def _validate_onchain(frame, start):
 
 
 @st.cache_data(ttl=3600)
-def fetch_sentiment(m11_case=""):
+def fetch_sentiment():
     try:
-        r = _m11_get("https://api.alternative.me/fng/?limit=0", m11_case=m11_case, timeout=15)
+        r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
         r.raise_for_status()
         df = pd.DataFrame(_source_records(r.json()))
         columns = ["timestamp", "value", "value_classification"]
@@ -1087,7 +943,7 @@ def fetch_sentiment(m11_case=""):
         raise RuntimeError("Sentimen riil tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
 
 @st.cache_data(ttl=3600)
-def fetch_onchain(start="2021-01-01", m11_case=""):
+def fetch_onchain(start="2021-01-01"):
     """
     Mengambil data on-chain (exchange netflow).
 
@@ -1121,7 +977,7 @@ def fetch_onchain(start="2021-01-01", m11_case=""):
                 "page_size": 10000,
                 "api_key": api_key,
             }
-            r = _m11_get(url, m11_case=m11_case, params=params, timeout=30)
+            r = requests.get(url, params=params, timeout=30)
             r.raise_for_status()
             payload = r.json()
             records = _source_records(payload)
@@ -1136,7 +992,7 @@ def fetch_onchain(start="2021-01-01", m11_case=""):
     # --- Fallback: CSV Community gratis (mungkin sudah berhenti update) ---
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     try:
-        r = _m11_get(url, m11_case=m11_case, timeout=30)
+        r = requests.get(url, timeout=30)
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
         return _validate_onchain(df, start), False
@@ -1147,16 +1003,13 @@ def fetch_onchain(start="2021-01-01", m11_case=""):
 # FUNGSI FEATURE ENGINEERING + MODEL
 # ============================================================
 @st.cache_data(ttl=3600)
-def build_features_and_predict(m11_case=""):
+def build_features_and_predict():
     prices = fetch_price()
-    sentiment, real = fetch_sentiment(m11_case=m11_case)
+    sentiment, real = fetch_sentiment()
     if not real:
         raise RuntimeError("Sentimen riil tidak tersedia. Prediksi tidak dijalankan.")
-    onchain, live = fetch_onchain(m11_case=m11_case)
-    _m11_event(m11_case, "forecast", phase="start")
-    output = build_forecast(prices, sentiment, onchain, live)
-    _m11_event(m11_case, "forecast", phase="complete")
-    return output
+    onchain, live = fetch_onchain()
+    return build_forecast(prices, sentiment, onchain, live)
 
 # ============================================================
 # STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
@@ -1164,8 +1017,6 @@ def build_features_and_predict(m11_case=""):
 # Model baru dijalankan setelah tombol ditekan. Komparasi tersimpan
 # dapat dibuka terpisah tanpa mengakses API atau melatih model.
 # ============================================================
-M11_CASE = _m11_panel()
-
 if "comparison_only" not in st.session_state:
     st.session_state.comparison_only = False
 
@@ -1176,9 +1027,7 @@ if "dashboard_started" not in st.session_state:
 # TOPBAR — branding (bagian yang tidak butuh data dulu)
 # ============================================================
 def start_dashboard():
-    if M11_CASE:
-        _m11_new_run(st.session_state.m11_active_mode)
-    elif st.session_state.dashboard_started:
+    if st.session_state.dashboard_started:
         st.cache_data.clear()
     st.session_state.dashboard_started = True
     st.session_state.comparison_only = False
@@ -1272,16 +1121,14 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
 # LOAD DATA (dengan spinner)
 # ============================================================
 DATA_OK = False
-M11_ERROR_TYPE = None
 if st.session_state.dashboard_started:
     with st.spinner("Mengambil data dan menyiapkan prediksi..."):
         try:
-            result = build_features_and_predict(m11_case=M11_CASE)
+            result = build_features_and_predict()
             df_full = result["df"]
             sent_real = True
             DATA_OK = True
         except Exception as error:
-            M11_ERROR_TYPE = type(error).__name__
             st.error("Data belum berhasil dimuat. Periksa koneksi, lalu tekan Refresh Data untuk mencoba lagi.")
             st.caption(f"Jenis kendala: {type(error).__name__}. Komparasi offline tetap tersedia.")
 
@@ -1520,7 +1367,3 @@ st.markdown("""
 <footer class='research-footer'><span>Huda Muhammad Nur · Sekolah Vokasi UGM</span>
 <span>Penelitian Tugas Akhir · 2026</span></footer>
 """, unsafe_allow_html=True)
-
-
-if M11_CASE and st.session_state.dashboard_started:
-    _m11_render_receipt(M11_CASE, DATA_OK, M11_ERROR_TYPE)

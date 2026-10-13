@@ -1,5 +1,18 @@
-# dashboard.py Bitcoin Price Dashboard
+# dashboard.py — Bitcoin Price Dashboard / TA Huda
+# Revisi 12 Oktober 2026 — UI usability M12 dan diagnosis M14–M17; SATU FILE.
+# Cukup ganti seluruh isi dashboard.py di repository Streamlit Anda.
+# Fungsi model, UI, dan hasil Colab terverifikasi sudah berada di file ini.
+# Tidak perlu dashboard_core.py, dashboard_results.py, atau folder dashboard_data.
+# Paket pihak ketiga sama dengan dashboard sebelumnya; SciPy adalah dependensi
+# hmmlearn. Rentang lama Streamlit >=1.40 didukung melalui adapter UI.
+# Jalankan: python -m streamlit run dashboard.py
+# Komparasi adalah hasil eksperimen tersimpan; prediksi live melakukan refit.
+# Netflow stale dan batasan statistik ditampilkan secara eksplisit.
 
+import time
+import uuid
+import hmac
+import re
 import base64
 import hashlib
 import inspect
@@ -60,7 +73,7 @@ FEATURE_COLS = [
     "exchange_netflow", "netflow_change", "netflow_ma_7", "polarity",
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
-CORE_VERSION = "2026.10.12-singlefile-m10"
+CORE_VERSION = "2026.10.12-singlefile-m12-m17"
 
 
 def filter_hmm(model, observations):
@@ -157,6 +170,8 @@ def build_forecast(prices, sentiment, onchain, onchain_live=False):
     from hmmlearn.hmm import GaussianHMM
     from xgboost import XGBRegressor
 
+    fit_timings = {}
+    section_started = time.perf_counter()
     if sentiment.empty or "polarity" not in sentiment:
         raise ValueError("Sentimen riil tidak tersedia. Prediksi tidak dijalankan.")
     if onchain.empty or onchain.exchange_netflow.dropna().empty:
@@ -199,7 +214,11 @@ def build_forecast(prices, sentiment, onchain, onchain_live=False):
     if fit_n < 60:
         raise ValueError("Blok train HMM belum cukup.")
     hmm = GaussianHMM(n_components=3, covariance_type="full", n_iter=200, tol=.01, random_state=42)
+    fit_timings["feature_preparation_seconds"] = time.perf_counter() - section_started
+    section_started = time.perf_counter()
     hmm.fit(X_hmm[:fit_n])
+    fit_timings["hmm_fit_seconds"] = time.perf_counter() - section_started
+    section_started = time.perf_counter()
     mapping = map_train_states(hmm, X_hmm[:fit_n])
     probabilities = filter_hmm(hmm, X_hmm)
     labels = np.array([mapping[int(state)] for state in probabilities.argmax(axis=1)])
@@ -213,8 +232,14 @@ def build_forecast(prices, sentiment, onchain, onchain_live=False):
                   random_state=42, verbosity=0, tree_method="hist", n_jobs=1)
     models = [XGBRegressor(**params, objective="reg:quantileerror", quantile_alpha=q)
               for q in [.05, .50, .95]]
+    fit_timings["regime_filter_and_split_seconds"] = time.perf_counter() - section_started
+    train_X, train_y = train[FEATURE_COLS].to_numpy(), train.target_return.to_numpy()
+    section_started = time.perf_counter()
     for model in models:
-        model.fit(train[FEATURE_COLS].to_numpy(), train.target_return.to_numpy())
+        model.fit(train_X, train_y)
+    fit_timings["xgboost_three_fits_seconds"] = time.perf_counter() - section_started
+    fit_timings["pure_fit_seconds"] = fit_timings["hmm_fit_seconds"] + fit_timings["xgboost_three_fits_seconds"]
+    section_started = time.perf_counter()
     lo_calib = models[0].predict(calibration[FEATURE_COLS].to_numpy())
     hi_calib = models[2].predict(calibration[FEATURE_COLS].to_numpy())
     scores = np.maximum(lo_calib - calibration.target_return.to_numpy(),
@@ -231,8 +256,9 @@ def build_forecast(prices, sentiment, onchain, onchain_live=False):
         raise ValueError("Prediksi harga tidak finite.")
     if pred_lo > pred_hi or np.any(hist_lo > hist_hi):
         raise ValueError("Batas interval saling silang; hasil tidak ditampilkan sebagai interval valid.")
+    fit_timings["calibration_and_prediction_seconds"] = time.perf_counter() - section_started
     history = list(hmm.monitor_.history)
-    metadata = dict(version=CORE_VERSION, regime_method="raw_filter", hmm_fit_n=fit_n,
+    metadata = dict(version=CORE_VERSION, timings=fit_timings, regime_method="raw_filter", hmm_fit_n=fit_n,
         hmm_fit_end=str(hdata.index[fit_n - 1].date()), hmm_iterations=int(hmm.monitor_.iter),
         hmm_last_delta=float(history[-1] - history[-2]) if len(history) > 1 else None,
         train_n=len(train), calibration_n=len(calibration), test_n=len(test),
@@ -295,10 +321,11 @@ def main_comparison_frame(run):
              "Model Usulan": "HMM + XGB Quantile + Conformal"}
     metrics = pd.DataFrame(run["metrics"]).set_index("Model")
     main = metrics.loc[BASELINES[:6]].reset_index()
-    main.insert(0, "No", range(1, len(main) + 1))
+    main.insert(0, "Peringkat MAE", main.MAE.rank(method="min", ascending=True).astype(int))
+    main = main.sort_values(["MAE", "Model"], kind="stable").reset_index(drop=True)
     main.insert(2, "Peran", main.Model.map(roles))
     main.insert(3, "Sumber", "Colab (offline)")
-    return main[["No", "Model", "Peran", "Sumber"] + METRICS[:7]]
+    return main[["Peringkat MAE", "Model", "Peran", "Sumber"] + METRICS[:7]]
 
 
 def selected_statistics(run, block=14):
@@ -381,12 +408,25 @@ def render_experiments(render_table, render_chart, accent):
     </details>
     """, unsafe_allow_html=True)
     st.markdown("<div class='section-label'>Hasil Evaluasi Model</div>", unsafe_allow_html=True)
-    main = main_comparison_frame(primary)[["Model"] + METRICS[:7]]
+    main = main_comparison_frame(primary)[["Peringkat MAE", "Model"] + METRICS[:7]]
+    proposed_rank = int(main.loc[main.Model.eq("Model Usulan"), "Peringkat MAE"].iloc[0])
+    best_model = main.iloc[0]["Model"]
+    st.caption(f"Urutan berdasarkan MAE terkecil. {best_model} berada di peringkat 1; "
+               f"Model Usulan di peringkat {proposed_rank} dari {len(main)} model pada periode uji ini.")
     render_table(display_metrics(main).rename(columns={
         "R2": "R²", "DirAcc": "Akurasi arah", "Coverage": "Cakupan", "AvgWidth": "Lebar rentang",
     }), label="Hasil evaluasi utama · raw kausal")
     st.caption("MAE, RMSE, dan MAPE mengukur kesalahan prediksi; nilai lebih kecil berarti kesalahan lebih rendah. "
                "Cakupan dan lebar rentang tersedia untuk Model Usulan.")
+
+    with st.expander("Cara membaca metrik evaluasi"):
+        st.markdown("**MAE (USD):** rata-rata besar selisih harga prediksi dari harga aktual. "
+                    "**RMSE (USD):** memberi bobot lebih besar pada kesalahan besar. "
+                    "**MAPE (%):** rata-rata kesalahan relatif. Ketiganya lebih kecil lebih baik.\n\n"
+                    "**R²:** kecocokan terhadap variasi harga; dapat bernilai negatif. "
+                    "**Akurasi arah:** persentase arah naik/turun yang sesuai. "
+                    "**Cakupan:** proporsi harga aktual di dalam interval; dibaca bersama "
+                    "**lebar rentang**. Peringkat MAE hanya merangkum metrik dan periode ini.")
 
     # The main analysis uses the fixed block-14 protocol; no experiment selector.
     with st.expander("Uji Signifikansi Statistik (stationary bootstrap, N=20000, Holm15, CI 95%)"):
@@ -452,7 +492,7 @@ def render_prediction(result, render_chart):
         """, unsafe_allow_html=True)
     if chain_age > 1:
         st.markdown(f"""
-        <details class='warn-box'><summary>{WARN_ICON}<span class='notice-title'>Data on-chain memakai catatan terakhir {format_date_id(result['onchain_last_real_date'])}.</span></summary>
+        <details class='warn-box' open><summary>{WARN_ICON}<span class='notice-title'>Data on-chain memakai catatan terakhir {format_date_id(result['onchain_last_real_date'])}.</span></summary>
         <div class='notice-body'>Nilai netflow tertinggal {chain_age} hari dari harga acuan dan diteruskan
         dari observasi terakhir (forward-fill). Nilai tersebut tidak menggambarkan aktivitas bursa terbaru.
         Hasil pengujian historis belum mengukur akurasi prediksi dalam kondisi ini.</div></details>
@@ -755,8 +795,10 @@ table.analytics-table tbody tr:has(td.model-usulan) { background: #fff7ec; }
 table.analytics-table td.model-usulan { color: var(--orange-ink); font-weight: 650; }
 table.compact-table { min-width: 850px; }
 table.compact-table td:nth-child(n+2), table.compact-table th:nth-child(n+2) { text-align: right; font-variant-numeric: tabular-nums; }
-table.compact-table th:first-child, table.compact-table td:first-child { min-width: 150px; }
-table.compact-table tr:has(td.model-usulan) td:first-child { background: #fff7ec; }
+table.compact-table th:first-child, table.compact-table td:first-child { min-width: 70px; }
+table.compact-table th:nth-child(2), table.compact-table td:nth-child(2) { min-width: 155px; text-align: left; }
+.table-scroll-hint { color: #52606d; font-size: 13px; margin: 8px 0 4px; }
+table.compact-table tr:has(td.model-usulan) td { background: #fff7ec; }
 table.analytics-table tbody tr:hover { background: #f2f4f6; }
 table.analytics-table th:first-child, table.analytics-table td:first-child { position: sticky; left: 0; background: #fff; }
 table.analytics-table th:first-child { background: #f0f3f5; }
@@ -811,7 +853,10 @@ table.analytics-table th:first-child { background: #f0f3f5; }
 
 
 def render_table(df: pd.DataFrame, label='Hasil evaluasi model'):
-    table_class = "analytics-table compact-table" if df.columns[0] == "Model" else "analytics-table"
+    table_class = "analytics-table compact-table" if "Model" in df.columns else "analytics-table"
+    if len(df.columns) > 4:
+        st.markdown("<p class='table-scroll-hint'>Geser tabel ke kanan/kiri untuk melihat seluruh kolom. "
+                    "Pada keyboard, fokuskan tabel lalu gunakan tombol panah.</p>", unsafe_allow_html=True)
     html = df.to_html(index=False, escape=True, classes=table_class, border=0)
     html = html.replace("<td>Model Usulan</td>", "<td class='model-usulan'>Model Usulan</td>")
     st.markdown(
@@ -842,8 +887,167 @@ def render_chart(fig, **kwargs):
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
 # ============================================================
+# Included verbatim in the standalone dashboard; no companion import required.
+def _qa_active():
+    return bool(st.session_state.get('qa_authorized', False))
+
+
+def _qa_event(event):
+    if _qa_active():
+        st.session_state.setdefault('qa_events', []).append(event)
+
+
+def _qa_resources():
+    """Process measurements only; never label these as host/server capacity."""
+    value = {'process_cpu_seconds': time.process_time(), 'rss_bytes': None}
+    try:
+        import psutil
+        process = psutil.Process()
+        value['rss_bytes'] = process.memory_info().rss
+        value['rss_method'] = 'psutil_process_current'
+        value['threads'] = process.num_threads()
+    except (ImportError, OSError):
+        try:
+            value['rss_bytes'] = int(Path('/proc/self/statm').read_text().split()[1]) * os.sysconf('SC_PAGE_SIZE')
+            value['rss_method'] = 'linux_proc_current'
+        except (OSError, ValueError, AttributeError):
+            value['rss_method'] = 'unavailable'
+    return value
+
+
+def _qa_cache_body(name):
+    if _qa_active():
+        stack = st.session_state.get('qa_call_stack', [])
+        if stack:
+            st.session_state.setdefault('qa_computed', []).append(stack[-1])
+
+
+def _qa_cached_call(name, function, *args):
+    if not _qa_active():
+        return function(*args)
+    call_id = uuid.uuid4().hex
+    st.session_state.setdefault('qa_call_stack', []).append(call_id)
+    before = _qa_resources(); started = time.perf_counter(); error = None
+    try:
+        return function(*args)
+    except Exception as exc:
+        error = type(exc).__name__
+        raise
+    finally:
+        after = _qa_resources()
+        st.session_state.qa_call_stack.pop()
+        computed = call_id in st.session_state.get('qa_computed', [])
+        _qa_event({'kind':'cache_call', 'function':name, 'call_id':call_id,
+                   'cache_status':'miss_computed' if computed else 'reuse_or_wait',
+                   'body_executed_here':computed, 'wall_seconds':time.perf_counter()-started,
+                   'process_cpu_delta_seconds':after['process_cpu_seconds']-before['process_cpu_seconds'],
+                   'process_before':before, 'process_after':after, 'error_type':error})
+
+
+def _qa_source(frame, source, started, response=None):
+    stamp={'source':source, 'execution_id':uuid.uuid4().hex,
+           'completed_utc':datetime.now(timezone.utc).isoformat(),
+           'wall_seconds':time.perf_counter()-started, 'rows':len(frame),
+           'first_date':str(frame.index.min()), 'last_date':str(frame.index.max()),
+           'columns':list(frame.columns),
+           'frame_sha256':hashlib.sha256(pd.util.hash_pandas_object(frame,index=True).values.tobytes()).hexdigest()}
+    if response is not None:
+        # Only fixed public endpoints are used; omit query strings, bodies and headers carrying credentials.
+        stamp.update(endpoint=str(response.url).split('?')[0], http_status=int(response.status_code),
+                     response_sha256=hashlib.sha256(response.content).hexdigest(),
+                     response_bytes=len(response.content),
+                     headers={k:response.headers.get(k) for k in ['Date','Content-Type','Last-Modified','ETag']})
+    else:
+        stamp.update(endpoint='Yahoo Finance via yfinance.download BTC-USD 1d',http_status=None,
+                     http_metadata_limit='Individual yfinance HTTP responses not intercepted.')
+    if 'exchange_netflow' in frame:
+        stamp['last_nonmissing_netflow_date']=str(frame.exchange_netflow.dropna().index.max())
+    frame.attrs['source_metadata']=stamp
+    return frame
+
+
+def _qa_scope():
+    return 'qa:'+st.session_state.qa_group if _qa_active() else 'public'
+
+
+def _qa_clear_scope():
+    scope=_qa_scope(); started=time.perf_counter()
+    _cached_build_features_and_predict.clear(scope)
+    _cached_fetch_price.clear('2021-01-01',scope)
+    _cached_fetch_sentiment.clear(scope)
+    _cached_fetch_onchain.clear('2021-01-01',scope)
+    st.session_state.qa_last_clear={'scope':scope,'wall_seconds':time.perf_counter()-started,
+                                  'utc':datetime.now(timezone.utc).isoformat(),'kind':'argument_scoped_cache_clear'}
+
+
+def _qa_panel():
+    if st.query_params.get('qa') != '1':
+        st.session_state.qa_authorized=False
+        return
+    st.subheader('Diagnosis TA M12–M19')
+    expected=''
+    try:
+        expected=str(st.secrets.get('TA_DIAGNOSTIC_TOKEN') or st.secrets.get('M11_TEST_TOKEN') or '')
+    except Exception:
+        pass
+    entered=st.text_input('Token diagnosis',type='password',key='qa_password')
+    st.session_state.qa_authorized=bool(len(expected)>=24 and hmac.compare_digest(entered,expected))
+    if not _qa_active():
+        st.info('Masukkan token diagnosis untuk membuka sesi pengukuran.')
+        st.stop()
+    st.session_state.setdefault('qa_group',uuid.uuid4().hex)
+    group=st.text_input('Kelompok cache uji',value=st.session_state.qa_group,max_chars=64)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',group):
+        st.error('Kelompok cache hanya boleh memuat huruf, angka, garis bawah, dan tanda hubung.')
+        st.stop()
+    if group != st.session_state.qa_group:
+        st.session_state.qa_group=group
+        st.session_state.dashboard_started=False
+        st.session_state.comparison_only=False
+    st.caption('Kelompok baru memisahkan cache aplikasi. Kelompok sama dapat berbagi cache. '
+               'Refresh membersihkan kunci kelompok ini; cache browser dan cache internal yfinance tetap terpisah.')
+    st.session_state.qa_events=[]
+    st.session_state.qa_computed=[]
+    st.session_state.qa_call_stack=[]
+
+
+def _qa_receipt(result=None, error_type=None):
+    return {'build':CORE_VERSION,'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'observed_utc':datetime.now(timezone.utc).isoformat(),'scope':_qa_scope(),
+            'events':st.session_state.get('qa_events',[]),
+            'last_clear':st.session_state.get('qa_last_clear'),
+            'process':_qa_resources(),'pipeline_success':result is not None,'error_type':error_type,
+            'pipeline_metadata':result.get('pipeline_metadata') if result else None,
+            'limits':['Process CPU/RSS are not host capacity; concurrent CPU attribution is shared.',
+                      'RSS snapshots are not continuous peak measurement.',
+                      'Cached origin timings are not new fit measurements.',
+                      'reuse_or_wait includes waiting for another session to populate the cache.',
+                      'Browser cache and internal yfinance cache are not application cache.']}
+
+
+def _qa_show_receipt(result=None,error_type=None):
+    if _qa_active():
+        receipt=_qa_receipt(result,error_type)
+        st.json(receipt,expanded=False)
+        st.download_button('Unduh bukti diagnosis',json.dumps(receipt,ensure_ascii=False,indent=2),
+                           file_name='diagnosis_ta.json',mime='application/json')
+        if result is not None:
+            audit={'metadata':result['pipeline_metadata'],
+                   'df_csv':result['df'][['close','polarity','exchange_netflow','regime_labeled']].to_csv(),
+                   'forecast':{k:([str(v) for v in result[k]] if k=='hist_target_dates' else
+                                    np.asarray(result[k]).tolist() if k.startswith('hist_') else
+                                    str(result[k]) if k in ['pred_date','onchain_last_real_date'] else result[k])
+                               for k in ['hist_target_dates','hist_true','hist_med','hist_lo','hist_hi',
+                                         'pred_date','pred_med','pred_lo','pred_hi','onchain_last_real_date']},
+                   'metrics':load_experiments()['runs']['raw_filter']['metrics']}
+            st.download_button('Unduh data audit grafik',json.dumps(audit,ensure_ascii=False),
+                               file_name='data_audit_grafik.json',mime='application/json')
+
+
 @st.cache_data(ttl=3600)
-def fetch_price(start="2021-01-01"):
+def _cached_fetch_price(start="2021-01-01", cache_scope="public"):
+    _qa_cache_body("price")
+    source_started = time.perf_counter()
     import yfinance as yf
     cache_dir = Path(__file__).resolve().parent / ".cache" / "yfinance"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -864,7 +1068,12 @@ def fetch_price(start="2021-01-01"):
 
     today_utc = pd.Timestamp(datetime.now(timezone.utc).date())
     df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
-    return df
+    return _qa_source(df, "price_yfinance", source_started)
+
+
+def fetch_price(start="2021-01-01", cache_scope="public"):
+    return _qa_cached_call("price", _cached_fetch_price, start, cache_scope)
+
 
 def _source_records(payload):
     """Accept a nonempty record list, not an API error masquerading as data."""
@@ -908,7 +1117,9 @@ def _validate_onchain(frame, start):
 
 
 @st.cache_data(ttl=3600)
-def fetch_sentiment():
+def _cached_fetch_sentiment(cache_scope="public"):
+    _qa_cache_body("sentiment")
+    source_started = time.perf_counter()
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
         r.raise_for_status()
@@ -936,80 +1147,55 @@ def fetch_sentiment():
         mapping = {"Extreme Fear":-1,"Fear":-0.5,"Neutral":0,"Greed":0.5,"Extreme Greed":1}
         df["polarity"] = df["value_classification"].map(mapping)
         df["polarity"] = df["polarity"].fillna((df["value"]-50)/50)
-        return df, True
+        return _qa_source(df, "sentiment_alternative_me", source_started, r), True
     except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
         # Raising prevents cache_data from storing a failed response for an hour.
         # Keep URLs, credentials and response bodies out of user-facing errors.
         raise RuntimeError("Sentimen riil tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
 
+def fetch_sentiment(cache_scope="public"):
+    return _qa_cached_call("sentiment", _cached_fetch_sentiment, cache_scope)
+
 @st.cache_data(ttl=3600)
-def fetch_onchain(start="2021-01-01"):
-    """
-    Mengambil data on-chain (exchange netflow).
-
-    Prioritas:
-    1. Jika COINMETRICS_API_KEY tersedia (st.secrets atau environment
-       variable) -> pakai endpoint CoinMetrics Pro (live, harian).
-    2. Jika tidak -> fallback ke CSV Community di GitHub. Kesegaran metrik
-       diperiksa dari nilai netflow tidak kosong yang benar-benar tersedia;
-       tanggal baris CSV terakhir dapat lebih baru daripada nilai netflow.
-
-    Return: (df, is_live)
-        df       : dataframe dengan kolom exchange_netflow, FlowInExNtv, FlowOutExNtv
-        is_live  : True jika data diambil dari jalur live/premium
-    """
-    api_key = None
-    try:
-        api_key = st.secrets.get("COINMETRICS_API_KEY", None)
-    except Exception:
-        pass
-    if not api_key:
-        api_key = os.environ.get("COINMETRICS_API_KEY")
-
-    if api_key:
-        try:
-            url = "https://api.coinmetrics.io/v4/timeseries/asset-metrics"
-            params = {
-                "assets": "btc",
-                "metrics": "FlowInExNtv,FlowOutExNtv",
-                "start_time": start,
-                "frequency": "1d",
-                "page_size": 10000,
-                "api_key": api_key,
-            }
-            r = requests.get(url, params=params, timeout=30)
-            r.raise_for_status()
-            payload = r.json()
-            records = _source_records(payload)
-            if payload.get("next_page_token"):
-                raise ValueError("Respons on-chain belum lengkap; gunakan fallback.")
-            if any("asset" in row and row["asset"] != "btc" for row in records):
-                raise ValueError("Aset pada respons on-chain tidak sesuai.")
-            return _validate_onchain(pd.DataFrame(records), start), True
-        except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
-            pass  # jatuh ke fallback gratis di bawah
-
-    # --- Fallback: CSV Community gratis (mungkin sudah berhenti update) ---
+def _cached_fetch_onchain(start="2021-01-01", cache_scope="public"):
+    _qa_cache_body("onchain")
+    source_started = time.perf_counter()
+    """Free CoinMetrics Community CSV only, matching the thesis scope."""
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     try:
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-        return _validate_onchain(df, start), False
+        return _qa_source(_validate_onchain(df, start), "onchain_community_csv", source_started, r), False
     except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
         raise RuntimeError("Data on-chain tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
 
 # ============================================================
 # FUNGSI FEATURE ENGINEERING + MODEL
 # ============================================================
+def fetch_onchain(start="2021-01-01", cache_scope="public"):
+    return _qa_cached_call("onchain", _cached_fetch_onchain, start, cache_scope)
+
+
 @st.cache_data(ttl=3600)
-def build_features_and_predict():
-    prices = fetch_price()
-    sentiment, real = fetch_sentiment()
+def _cached_build_features_and_predict(cache_scope="public"):
+    _qa_cache_body("pipeline")
+    pipeline_started = time.perf_counter()
+    prices = fetch_price(cache_scope=cache_scope)
+    sentiment, real = fetch_sentiment(cache_scope=cache_scope)
     if not real:
         raise RuntimeError("Sentimen riil tidak tersedia. Prediksi tidak dijalankan.")
-    onchain, live = fetch_onchain()
-    return build_forecast(prices, sentiment, onchain, live)
+    onchain, live = fetch_onchain(cache_scope=cache_scope)
+    result = build_forecast(prices, sentiment, onchain, live)
+    result["pipeline_metadata"].update(computation_id=uuid.uuid4().hex,
+        computed_utc=datetime.now(timezone.utc).isoformat(),
+        pipeline_compute_seconds=time.perf_counter()-pipeline_started,
+        sources=[frame.attrs["source_metadata"] for frame in [prices,sentiment,onchain]])
+    return result
+
+
+def build_features_and_predict(cache_scope=None):
+    return _qa_cached_call("pipeline", _cached_build_features_and_predict, cache_scope or _qa_scope())
 
 # ============================================================
 # STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
@@ -1028,7 +1214,10 @@ if "dashboard_started" not in st.session_state:
 # ============================================================
 def start_dashboard():
     if st.session_state.dashboard_started:
-        st.cache_data.clear()
+        if _qa_active():
+            _qa_clear_scope()
+        else:
+            st.cache_data.clear()
     st.session_state.dashboard_started = True
     st.session_state.comparison_only = False
 
@@ -1036,6 +1225,8 @@ def start_dashboard():
 def open_comparison():
     st.session_state.comparison_only = True
 
+
+_qa_panel()
 
 topbar_col, refresh_col = st.columns([4, 1], vertical_alignment="center")
 with topbar_col:
@@ -1121,6 +1312,7 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
 # LOAD DATA (dengan spinner)
 # ============================================================
 DATA_OK = False
+QA_ERROR_TYPE = None
 if st.session_state.dashboard_started:
     with st.spinner("Mengambil data dan menyiapkan prediksi..."):
         try:
@@ -1129,6 +1321,7 @@ if st.session_state.dashboard_started:
             sent_real = True
             DATA_OK = True
         except Exception as error:
+            QA_ERROR_TYPE = type(error).__name__
             st.error("Data belum berhasil dimuat. Periksa koneksi, lalu tekan Refresh Data untuk mencoba lagi.")
             st.caption(f"Jenis kendala: {type(error).__name__}. Komparasi offline tetap tersedia.")
 
@@ -1367,3 +1560,6 @@ st.markdown("""
 <footer class='research-footer'><span>Huda Muhammad Nur · Sekolah Vokasi UGM</span>
 <span>Penelitian Tugas Akhir · 2026</span></footer>
 """, unsafe_allow_html=True)
+
+
+_qa_show_receipt(result if DATA_OK else None, QA_ERROR_TYPE)

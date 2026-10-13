@@ -1,5 +1,5 @@
 # dashboard.py — Bitcoin Price Dashboard / TA Huda
-# Revisi 12 Oktober 2026
+# Revisi 12 Oktober 2026 — UI usability
 
 import time
 import uuid
@@ -1152,6 +1152,7 @@ def fetch_sentiment(cache_scope="public"):
 def _cached_fetch_onchain(start="2021-01-01", cache_scope="public"):
     _qa_cache_body("onchain")
     source_started = time.perf_counter()
+    # Use only the free CoinMetrics Community CSV source.
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     try:
         r = requests.get(url, timeout=30)

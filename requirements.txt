@@ -1,8 +1,9 @@
-streamlit==1.50.0
-pandas
-numpy==1.26.4
-requests
-plotly
-yfinance
-xgboost
-hmmlearn==0.3.2
+streamlit==1.64.0
+plotly==7.1.0
+pandas==3.0.6
+numpy==2.5.3
+scipy==1.18.1
+requests==2.34.2
+yfinance==1.7.0
+xgboost==3.4.1
+hmmlearn==0.3.3

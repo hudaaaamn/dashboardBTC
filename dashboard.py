@@ -1152,7 +1152,6 @@ def fetch_sentiment(cache_scope="public"):
 def _cached_fetch_onchain(start="2021-01-01", cache_scope="public"):
     _qa_cache_body("onchain")
     source_started = time.perf_counter()
-    """Free CoinMetrics Community CSV only, matching the thesis scope."""
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     try:
         r = requests.get(url, timeout=30)

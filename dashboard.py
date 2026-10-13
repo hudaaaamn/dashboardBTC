@@ -1,13 +1,5 @@
 # dashboard.py — Bitcoin Price Dashboard / TA Huda
-# Revisi 12 Oktober 2026 — UI usability M12 dan diagnosis M14–M17; SATU FILE.
-# Cukup ganti seluruh isi dashboard.py di repository Streamlit Anda.
-# Fungsi model, UI, dan hasil Colab terverifikasi sudah berada di file ini.
-# Tidak perlu dashboard_core.py, dashboard_results.py, atau folder dashboard_data.
-# Paket pihak ketiga sama dengan dashboard sebelumnya; SciPy adalah dependensi
-# hmmlearn. Rentang lama Streamlit >=1.40 didukung melalui adapter UI.
-# Jalankan: python -m streamlit run dashboard.py
-# Komparasi adalah hasil eksperimen tersimpan; prediksi live melakukan refit.
-# Netflow stale dan batasan statistik ditampilkan secara eksplisit.
+# Revisi 12 Oktober 2026
 
 import time
 import uuid

@@ -1980,8 +1980,7 @@ def render_experiments(render_table, render_chart, accent):
     <details class='info-box'>
         <summary>Referensi eksperimen · hasil Google Colab yang digunakan pada TA</summary>
         <div class='notice-body'>
-            Seluruh model pada tabel dan grafik memakai satu run Google Colab yang sama:
-            <b>{escape(primary['label'])}</b>.<br>
+            Seluruh model pada tabel dan grafik memakai satu run Google Colab yang sama.<br>
             Tanggal fitur {escape(primary['feature_start'])}–{escape(primary['feature_end'])};
             tanggal target {escape(primary['target_start'])}–{escape(primary['target_end'])}.<br>
             Data latih {primary['train_n']:,}, kalibrasi {primary['calibration_n']:,}, dan uji {primary['n']:,} sampel.

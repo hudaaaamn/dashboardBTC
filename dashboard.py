@@ -1,9 +1,8 @@
-# dashboard.py — Bitcoin Price Dashboard / TA Huda
-# Revisi 14 Oktober 2026 — hasil Colab dan naskah terbaru
+# dashboard.py 
+# Bitcoin Price Dashboard-TA Huda Muhammad Nur
 
 import time
 import uuid
-import hmac
 import re
 import base64
 import hashlib
@@ -1549,7 +1548,7 @@ FEATURE_COLS = [
     "sentiment_ma_7", "netflow_weighted", "regime_labeled",
 ]
 REFERENCE_RUN_ID = "20261014T143309509894Z"
-CORE_VERSION = "2026.10.15-ta-performance-preparation-v4"
+CORE_VERSION = "2026.10.16-ta-public-v1"
 
 
 def filter_hmm(model, observations, dates=None):
@@ -2507,130 +2506,11 @@ def mark_imputed_periods(fig, frame, flag):
 # ============================================================
 # FUNGSI FETCH DATA (di-cache 1 jam)
 # ============================================================
-# Included verbatim in the standalone dashboard; no companion import required.
+# Metadata sumber dan snapshot cadangan riil untuk penggunaan normal.
 # Instrumentation for the dedicated test deployment, gated by a secret and token.
-def _perf_enabled():
-    if os.environ.get('TA_PERFORMANCE_TESTING') == '1':
-        return True
-    try:
-        return st.secrets.get('TA_PERFORMANCE_TESTING', False) is True
-    except Exception:
-        return False
 
 
-def _perf_snapshot(kind, started):
-    payload = load_experiments()['snapshots'][kind]
-    frame = _read_source_csv(payload['csv'], kind)
-    last_price = _read_source_csv(load_experiments()['snapshots']['price']['csv'], 'price').index.max()
-    cutoff = last_price - pd.Timedelta(days=1) if st.session_state.qa_profile == 'snapshot_A' else last_price
-    frame = frame.loc[frame.index <= cutoff].copy()
-    names = {'price': 'price_yfinance', 'sentiment': 'sentiment_alternative_me', 'onchain': 'onchain_community_csv'}
-    frame = _qa_source(frame, names[kind], started)
-    frame.attrs['source_metadata'].update(
-        endpoint='embedded_real_colab_snapshot', source_mode='controlled_real_snapshot',
-        profile=st.session_state.qa_profile, cutoff=str(cutoff),
-        snapshot_csv_sha256=payload['csv_sha256'], reference_run_id=REFERENCE_RUN_ID,
-        is_fallback=False, http_metadata_limit='No HTTP request in controlled snapshot mode.')
-    return frame
-
-
-def _perf_receipt(result):
-    import platform
-    import importlib.metadata
-    packages = {}
-    for name in ['streamlit', 'plotly', 'numpy', 'pandas', 'hmmlearn', 'xgboost', 'yfinance']:
-        try:
-            packages[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            packages[name] = None
-    forecast = None
-    if result is not None:
-        forecast = {'origin': str(result['last_date']), 'target': str(result['pred_date']),
-                    'median': float(result['pred_med']), 'lower': float(result['pred_lo']),
-                    'upper': float(result['pred_hi'])}
-    period = globals().get('period', '1 Tahun')
-    rows = int(len(globals()['df_view'])) if 'df_view' in globals() else None
-    return {'schema': 'ta-performance-v1', 'render_id': st.session_state.perf_render_id,
-            'profile': st.session_state.get('qa_profile', 'live'), 'period': period,
-            'analysis_rows': rows, 'forecast': forecast,
-            'runtime': {'python': platform.python_version(), 'platform': platform.platform(),
-                        'packages': packages}}
-
-
-def _perf_ready(result=None, error_type=None, marker_id='ta-perf-ready'):
-    if not _qa_active():
-        return
-    receipt = _qa_receipt(result, error_type)
-    encoded = base64.b64encode(json.dumps(receipt, ensure_ascii=False, default=str).encode('utf-8')).decode('ascii')
-    st.markdown(f'<div id="{marker_id}" data-receipt="{encoded}" aria-hidden="true"></div>',
-                unsafe_allow_html=True)
-
-
-def _perf_landing():
-    if _qa_active():
-        receipt = _qa_receipt()
-        encoded = base64.b64encode(json.dumps(receipt, ensure_ascii=False, default=str).encode('utf-8')).decode('ascii')
-        st.markdown(f'<div id="ta-perf-landing" data-receipt="{encoded}" aria-hidden="true"></div>',
-                    unsafe_allow_html=True)
-
-
-def _qa_active():
-    return bool(st.session_state.get('qa_authorized', False))
-
-
-def _qa_event(event):
-    if _qa_active():
-        st.session_state.setdefault('qa_events', []).append(event)
-
-
-def _qa_resources():
-    """Process measurements only; never label these as host/server capacity."""
-    value = {'process_cpu_seconds': time.process_time(), 'rss_bytes': None}
-    try:
-        import psutil
-        process = psutil.Process()
-        value['rss_bytes'] = process.memory_info().rss
-        value['rss_method'] = 'psutil_process_current'
-        value['threads'] = process.num_threads()
-    except (ImportError, OSError):
-        try:
-            value['rss_bytes'] = int(Path('/proc/self/statm').read_text().split()[1]) * os.sysconf('SC_PAGE_SIZE')
-            value['rss_method'] = 'linux_proc_current'
-        except (OSError, ValueError, AttributeError):
-            value['rss_method'] = 'unavailable'
-    return value
-
-
-def _qa_cache_body(name):
-    if _qa_active():
-        stack = st.session_state.get('qa_call_stack', [])
-        if stack:
-            st.session_state.setdefault('qa_computed', []).append(stack[-1])
-
-
-def _qa_cached_call(name, function, *args):
-    if not _qa_active():
-        return function(*args)
-    call_id = uuid.uuid4().hex
-    st.session_state.setdefault('qa_call_stack', []).append(call_id)
-    before = _qa_resources(); started = time.perf_counter(); error = None
-    try:
-        return function(*args)
-    except Exception as exc:
-        error = type(exc).__name__
-        raise
-    finally:
-        after = _qa_resources()
-        st.session_state.qa_call_stack.pop()
-        computed = call_id in st.session_state.get('qa_computed', [])
-        _qa_event({'kind':'cache_call', 'function':name, 'call_id':call_id,
-                   'cache_status':'miss_computed' if computed else 'reuse_or_wait',
-                   'body_executed_here':computed, 'wall_seconds':time.perf_counter()-started,
-                   'process_cpu_delta_seconds':after['process_cpu_seconds']-before['process_cpu_seconds'],
-                   'process_before':before, 'process_after':after, 'error_type':error})
-
-
-def _qa_source(frame, source, started, response=None):
+def _source_metadata(frame, source, started, response=None):
     stamp={'source':source, 'execution_id':uuid.uuid4().hex,
            'completed_utc':datetime.now(timezone.utc).isoformat(),
            'wall_seconds':time.perf_counter()-started, 'rows':len(frame),
@@ -2650,92 +2530,6 @@ def _qa_source(frame, source, started, response=None):
         stamp['last_nonmissing_netflow_date']=str(frame.exchange_netflow.dropna().index.max())
     frame.attrs['source_metadata']=stamp
     return frame
-
-
-def _qa_scope():
-    return ('qa:'+st.session_state.qa_group+':'+st.session_state.get('qa_profile','snapshot_A')) if _qa_active() else 'public'
-
-
-def _qa_clear_scope():
-    scope=_qa_scope(); started=time.perf_counter()
-    _cached_build_features_and_predict.clear(scope, CORE_VERSION)
-    _cached_fetch_price.clear('2021-01-01',scope,CORE_VERSION)
-    _cached_fetch_sentiment.clear(scope,CORE_VERSION)
-    _cached_fetch_onchain.clear('2021-01-01',scope,CORE_VERSION)
-    st.session_state.qa_last_clear={'scope':scope,'wall_seconds':time.perf_counter()-started,
-                                  'utc':datetime.now(timezone.utc).isoformat(),'kind':'argument_scoped_cache_clear'}
-
-
-def _qa_panel():
-    if st.query_params.get('qa') != '1':
-        st.session_state.qa_authorized=False
-        return
-    if not _perf_enabled():
-        st.error('Mode pengujian performa belum diaktifkan pada deployment ini.')
-        st.stop()
-    st.subheader('Pengujian performa TA')
-    expected=os.environ.get('TA_DIAGNOSTIC_TOKEN','')
-    try:
-        expected=str(expected or st.secrets.get('TA_DIAGNOSTIC_TOKEN') or '')
-    except Exception:
-        pass
-    entered=st.text_input('Token diagnosis',type='password',key='qa_password')
-    st.session_state.qa_authorized=bool(len(expected)>=24 and hmac.compare_digest(entered,expected))
-    if not _qa_active():
-        st.info('Masukkan token diagnosis untuk membuka sesi pengukuran.')
-        st.stop()
-    st.session_state.setdefault('qa_group',uuid.uuid4().hex)
-    group=st.text_input('Kelompok cache uji',value=st.session_state.qa_group,max_chars=64)
-    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',group):
-        st.error('Kelompok cache hanya boleh memuat huruf, angka, garis bawah, dan tanda hubung.')
-        st.stop()
-    if group != st.session_state.qa_group:
-        st.session_state.qa_group=group
-        st.session_state.dashboard_started=False
-        st.session_state.comparison_only=False
-    st.caption('Kelompok baru memisahkan cache aplikasi. Kelompok sama dapat berbagi cache. '
-               'Refresh membersihkan kunci kelompok ini; cache browser dan cache internal yfinance tetap terpisah.')
-    st.selectbox('Sumber pengujian', ['snapshot_A', 'snapshot_B', 'live'], key='qa_profile')
-    st.button('Kosongkan cache uji', on_click=_qa_clear_scope)
-    st.caption('Snapshot A/B berasal dari data riil Colab. A berakhir satu hari sebelum B. '
-               'Mode snapshot mengukur aplikasi dengan sumber terkendali; latensi API langsung tidak diukur.')
-    st.session_state.qa_events=[]
-    st.session_state.qa_computed=[]
-    st.session_state.qa_call_stack=[]
-    st.session_state.perf_render_id=uuid.uuid4().hex
-
-
-def _qa_receipt(result=None, error_type=None):
-    return {**_perf_receipt(result), 'build':CORE_VERSION,'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            'observed_utc':datetime.now(timezone.utc).isoformat(),'scope':_qa_scope(),
-            'events':st.session_state.get('qa_events',[]),
-            'last_clear':st.session_state.get('qa_last_clear'),
-            'process':_qa_resources(),'pipeline_success':result is not None,'error_type':error_type,
-            'pipeline_metadata':result.get('pipeline_metadata') if result else None,
-            'limits':['Process CPU/RSS are not host capacity; concurrent CPU attribution is shared.',
-                      'RSS snapshots are not continuous peak measurement.',
-                      'Cached origin timings are not new fit measurements.',
-                      'reuse_or_wait includes waiting for another session to populate the cache.',
-                      'Browser cache and internal yfinance cache are not application cache.']}
-
-
-def _qa_show_receipt(result=None,error_type=None):
-    if _qa_active():
-        receipt=_qa_receipt(result,error_type)
-        st.json(receipt,expanded=False)
-        st.download_button('Unduh bukti diagnosis',json.dumps(receipt,ensure_ascii=False,indent=2),
-                           file_name='diagnosis_ta.json',mime='application/json')
-        if result is not None:
-            audit={'metadata':result['pipeline_metadata'],
-                   'df_csv':result['df'][['close','polarity','exchange_netflow','regime_labeled']].to_csv(),
-                   'forecast':{k:([str(v) for v in result[k]] if k=='hist_target_dates' else
-                                    np.asarray(result[k]).tolist() if k.startswith('hist_') else
-                                    str(result[k]) if k in ['pred_date','onchain_last_real_date'] else result[k])
-                               for k in ['hist_target_dates','hist_true','hist_med','hist_lo','hist_hi',
-                                         'pred_date','pred_med','pred_lo','pred_hi','onchain_last_real_date']},
-                   'metrics':load_experiments()['runs']['colab_latest']['metrics']}
-            st.download_button('Unduh data audit grafik',json.dumps(audit,ensure_ascii=False),
-                               file_name='data_audit_grafik.json',mime='application/json')
 
 
 def _source_cache_paths(kind, scope):
@@ -2812,10 +2606,7 @@ def _stored_source(kind, scope, error):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_fetch_price(start="2021-01-01", cache_scope="public", reference_version=CORE_VERSION):
-    _qa_cache_body("price")
     source_started = time.perf_counter()
-    if _qa_active() and st.session_state.get('qa_profile','snapshot_A') != 'live':
-        return _perf_snapshot('price', source_started)
     import yfinance as yf
     cache_dir = Path(__file__).resolve().parent / ".cache" / "yfinance"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -2838,12 +2629,12 @@ def _cached_fetch_price(start="2021-01-01", cache_scope="public", reference_vers
     df = df[df.index < today_utc]  # buang baris "hari ini" (live/belum final)
     if df.empty:
         raise RuntimeError('Tidak ada harga penutupan harian yang sudah selesai.')
-    return _remember_source(_qa_source(df, 'price_yfinance', source_started), 'price', cache_scope)
+    return _remember_source(_source_metadata(df, 'price_yfinance', source_started), 'price', cache_scope)
 
 
 def fetch_price(start="2021-01-01", cache_scope="public"):
     try:
-        return _qa_cached_call('price',_cached_fetch_price,start,cache_scope,CORE_VERSION)
+        return _cached_fetch_price(start,cache_scope,CORE_VERSION)
     except (RuntimeError,ValueError,OSError,requests.RequestException):
         error = RuntimeError('Sumber harga tidak tersedia.')
         frame = _stored_source('price',cache_scope,error)
@@ -2893,10 +2684,7 @@ def _validate_onchain(frame, start):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_fetch_sentiment(cache_scope="public", reference_version=CORE_VERSION):
-    _qa_cache_body("sentiment")
     source_started = time.perf_counter()
-    if _qa_active() and st.session_state.get('qa_profile','snapshot_A') != 'live':
-        return _perf_snapshot('sentiment', source_started), True
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=0", timeout=15)
         r.raise_for_status()
@@ -2924,7 +2712,7 @@ def _cached_fetch_sentiment(cache_scope="public", reference_version=CORE_VERSION
         mapping = {"Extreme Fear":-1,"Fear":-0.5,"Neutral":0,"Greed":0.5,"Extreme Greed":1}
         df["polarity"] = df["value_classification"].map(mapping)
         df["polarity"] = df["polarity"].fillna((df["value"]-50)/50)
-        return _remember_source(_qa_source(df, 'sentiment_alternative_me', source_started, r),
+        return _remember_source(_source_metadata(df, 'sentiment_alternative_me', source_started, r),
                                 'sentiment',cache_scope), True
     except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
         # Raising prevents cache_data from storing a failed response for an hour.
@@ -2933,23 +2721,20 @@ def _cached_fetch_sentiment(cache_scope="public", reference_version=CORE_VERSION
 
 def fetch_sentiment(cache_scope="public"):
     try:
-        return _qa_cached_call('sentiment',_cached_fetch_sentiment,cache_scope,CORE_VERSION)
+        return _cached_fetch_sentiment(cache_scope,CORE_VERSION)
     except (RuntimeError,ValueError,OSError,requests.RequestException) as error:
         return _stored_source('sentiment',cache_scope,error),True
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_fetch_onchain(start="2021-01-01", cache_scope="public", reference_version=CORE_VERSION):
-    _qa_cache_body("onchain")
     source_started = time.perf_counter()
-    if _qa_active() and st.session_state.get('qa_profile','snapshot_A') != 'live':
-        return _perf_snapshot('onchain', source_started), True
     # Use only the free CoinMetrics Community CSV source.
     url = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
     try:
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-        return _remember_source(_qa_source(_validate_onchain(df,start),'onchain_community_csv',source_started,r),
+        return _remember_source(_source_metadata(_validate_onchain(df,start),'onchain_community_csv',source_started,r),
                                 'onchain',cache_scope),False
     except (requests.RequestException, ValueError, TypeError, KeyError, OverflowError):
         raise RuntimeError("Data on-chain tidak tersedia atau tidak valid. Prediksi tidak dijalankan.") from None
@@ -2959,14 +2744,13 @@ def _cached_fetch_onchain(start="2021-01-01", cache_scope="public", reference_ve
 # ============================================================
 def fetch_onchain(start="2021-01-01", cache_scope="public"):
     try:
-        return _qa_cached_call('onchain',_cached_fetch_onchain,start,cache_scope,CORE_VERSION)
+        return _cached_fetch_onchain(start,cache_scope,CORE_VERSION)
     except (RuntimeError,ValueError,OSError,requests.RequestException) as error:
         return _stored_source('onchain',cache_scope,error).loc[start:].copy(),False
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_build_features_and_predict(cache_scope="public", model_version=CORE_VERSION):
-    _qa_cache_body("pipeline")
     pipeline_started = time.perf_counter()
     prices = fetch_price(cache_scope=cache_scope)
     sentiment, real = fetch_sentiment(cache_scope=cache_scope)
@@ -2982,7 +2766,7 @@ def _cached_build_features_and_predict(cache_scope="public", model_version=CORE_
 
 
 def build_features_and_predict(cache_scope=None):
-    return _qa_cached_call('pipeline',_cached_build_features_and_predict,cache_scope or _qa_scope(),CORE_VERSION)
+    return _cached_build_features_and_predict(cache_scope or 'public', CORE_VERSION)
 
 # ============================================================
 # STATE — apakah pipeline/model sudah pernah dijalankan di sesi ini
@@ -3001,14 +2785,11 @@ if "dashboard_started" not in st.session_state:
 # ============================================================
 def start_dashboard():
     if st.session_state.dashboard_started:
-        if _qa_active():
-            _qa_clear_scope()
-        else:
-            scope = _qa_scope()
-            _cached_build_features_and_predict.clear(scope,CORE_VERSION)
-            _cached_fetch_price.clear('2021-01-01',scope,CORE_VERSION)
-            _cached_fetch_sentiment.clear(scope,CORE_VERSION)
-            _cached_fetch_onchain.clear('2021-01-01',scope,CORE_VERSION)
+        scope = 'public'
+        _cached_build_features_and_predict.clear(scope, CORE_VERSION)
+        _cached_fetch_price.clear('2021-01-01', scope, CORE_VERSION)
+        _cached_fetch_sentiment.clear(scope, CORE_VERSION)
+        _cached_fetch_onchain.clear('2021-01-01', scope, CORE_VERSION)
     st.session_state.dashboard_started = True
     st.session_state.comparison_only = False
 
@@ -3016,8 +2797,6 @@ def start_dashboard():
 def open_comparison():
     st.session_state.comparison_only = True
 
-
-_qa_panel()
 
 topbar_col, refresh_col = st.columns([4, 1], vertical_alignment="center")
 with topbar_col:
@@ -3097,14 +2876,12 @@ if not st.session_state.dashboard_started and not st.session_state.comparison_on
     <footer class='research-footer'><span>Huda Muhammad Nur · Sekolah Vokasi UGM</span>
     <span>Penelitian Tugas Akhir · 2026</span></footer>
     """, unsafe_allow_html=True)
-    _perf_landing()
     st.stop()
 
 # ============================================================
 # LOAD DATA (dengan spinner)
 # ============================================================
 DATA_OK = False
-QA_ERROR_TYPE = None
 if st.session_state.dashboard_started:
     with st.spinner("Mengambil data dan menyiapkan prediksi..."):
         try:
@@ -3113,7 +2890,6 @@ if st.session_state.dashboard_started:
             sent_real = True
             DATA_OK = True
         except Exception as error:
-            QA_ERROR_TYPE = type(error).__name__
             st.error("Prediksi belum dapat dihitung dari sumber yang tersedia. Tekan Refresh Data untuk mencoba lagi.")
             st.caption(f"Jenis kendala: {type(error).__name__}. Komparasi offline tetap tersedia.")
             if isinstance(error,ValueError):
@@ -3160,7 +2936,6 @@ with tab_pred:
         st.info("Jalankan prediksi untuk memuat data. Hasil Google Colab TA tersedia pada tab Komparasi Model.")
     else:
         render_prediction(result, render_chart)
-        _perf_ready(result, marker_id='ta-perf-pred-ready')
 
 # ============================================================
 # HALAMAN 2: KOMPARASI MODEL
@@ -3231,7 +3006,6 @@ with tab_data:
             barmode="stack"
         )
         render_chart(fig_price)
-        _perf_ready(result, marker_id='ta-perf-analysis-ready')
         st.caption('Bear, Sideways, dan Bull adalah label relatif berdasarkan urutan rata-rata return emisi HMM '
                    'pada data latih. Sideways tidak selalu berarti return mendekati nol. '
                    'Label setelah periode latih dihitung dengan filtering maju tanpa melihat observasi masa depan.')
@@ -3400,5 +3174,3 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-_qa_show_receipt(result if DATA_OK else None, QA_ERROR_TYPE)
-_perf_ready(result if DATA_OK else None, QA_ERROR_TYPE)
